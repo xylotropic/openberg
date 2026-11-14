@@ -72,7 +72,9 @@ class ReadClient:
             raise ValueError('Broker writes require a persisted coordinator intent')
         return await self.coordinator._transport.request(method, *args, **kwargs)
 
-    async def account(self): return (await self.coordinator.refresh())['account']
+    async def account(self):
+        snapshot=await self.coordinator.refresh()
+        return {**snapshot['account'],'_observed_at':snapshot['at']}
     async def positions(self): return (await self.coordinator.refresh())['positions']
     async def orders(self, **params):
         if params: return await self.coordinator._transport.orders(**params)
@@ -424,9 +426,10 @@ class BrokerCoordinator:
                         or answer.get('choice')!=dj['model_action'] or answer!=(decision.get('answers_json') or {}).get(row['symbol'])
                         or (answer.get('probabilities') or {}).get(dj['model_action'],0)<.6):
                     raise ValueError('Session trade is not bound to its exact live model decision')
-                allocation=float(self.snapshot['account'].get('equity') or 0)*.05
+                from ..scalper import allocation_pct
+                allocation=float(self.snapshot['account'].get('equity') or 0)*allocation_pct(self.s)/100
                 if float(body['qty'])*float(body.get('limit_price') or 0)>allocation+.000001:
-                    raise ValueError('Session entry exceeds five percent of paper-account equity')
+                    raise ValueError('Session entry exceeds configured allocation of paper-account equity')
         else:
             with self.db.lock:
                 order = self.db.conn.execute('SELECT * FROM alpha_orders WHERE id=? AND account_id=?', [intent['owner_record'], self.account_id]).fetchone()
@@ -553,6 +556,11 @@ class BrokerCoordinator:
                 raise ValueError('The dispatch deadline passed during broker preflight')
             # Pause, kill and group controls can run during network awaits. Check again before the atomic attempt.
             self.authority(intent,dispatch=True)
+            if intent['owner_type'] != 'manual' and intent['effect'] == 'increase':
+                from .account_guard import update
+                guard=update(self.db,self.s,{**self.snapshot['account'],'_observed_at':self.snapshot['at']},now=now,record_snapshot=False)
+                if guard['blocked']:
+                    raise ValueError(guard['reason'])
             if intent['effect'] in ('increase','repair') and self.state('account_quarantine'):
                 raise ValueError('Ownership quarantine was raised during broker preflight')
             if intent['effect'] in ('increase','repair') and self.s.kill_file.exists():

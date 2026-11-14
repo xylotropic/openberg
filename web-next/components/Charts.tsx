@@ -166,7 +166,7 @@ export function EquityChart() {
   const host = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Area"> | null>(null);
-  const [period, setPeriod] = useState("1W");
+  const [period, setPeriod] = useState("1D");
   const [data, setData] = useState<any>(null), [error, setError] = useState("");
   useEffect(() => {
     const c = createChart(host.current!, baseOpts() as any);
@@ -194,7 +194,7 @@ export function EquityChart() {
   }, [data, period]);
   const last = data?.period === period ? data.points?.at(-1)?.[1] : null;
   return <>
-    <div className="ph"><span className="code">NAV</span>Paper account equity
+    <div className="ph" data-tip={data?.basis}><span className="code">NAV</span>Paper account equity
       <span className="seg">{["1D", "1W", "1M"].map(p => <button key={p} className={p === period ? "on" : ""} onClick={() => setPeriod(p)}>{p}</button>)}</span>
       <span className="ph-r">{last != null ? `$${fx(last, 2)}` : "—"}</span>
     </div>

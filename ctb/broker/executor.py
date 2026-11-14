@@ -221,9 +221,15 @@ class Executor:
         eq = self.wallet.get("equity") or 0
         if eq <= 0:
             return "no equity"
-        if self.daily_pnl() <= -eq * self.s.daily_loss_limit_pct / 100:
-            self.halted_reason = f"daily loss limit {self.s.daily_loss_limit_pct}% hit"
+        if reason := self.loss_limit_reason():
+            self.halted_reason = reason
             return self.halted_reason
+        return None
+
+    def loss_limit_reason(self):
+        eq = self.wallet.get('equity') or 0
+        if self.daily_pnl() <= -eq * self.s.daily_loss_limit_pct / 100:
+            return f'daily loss limit {self.s.daily_loss_limit_pct}% hit'
         return None
 
     # ------------------------------------------------------------------ entries

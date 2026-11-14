@@ -26,6 +26,13 @@ RESERVE = 262144 * PRICE
 CADENCE = 'prepaid-30s-600s-v1'
 
 
+def allocation_pct(settings):
+    value=float(settings.scalper_allocation_pct)
+    if not math.isfinite(value) or not 0 < value <= 100:
+        raise ValueError('Session allocation must be greater than zero and at most 100 percent')
+    return value
+
+
 def cadence(symbol):
     return 30 if symbol == 'SPY' or symbol in CRYPTO else 600
 SCHEMA = '''
@@ -174,9 +181,10 @@ class Scalper:
         if self.client.url!='https://console.nace.ai/v1/systemone':
             raise ValueError('Session strategy requires the verified Nace endpoint')
         cfg=self.e.run['config_json']
-        if cfg.get('qset')!=VERSION or cfg.get('strategy',{}).get('cadence')!=CADENCE:
+        if (cfg.get('qset')!=VERSION or cfg.get('strategy',{}).get('cadence')!=CADENCE
+                or cfg.get('allocation_pct_per_position')!=allocation_pct(self.e.s)):
             from .runs import start
-            self.e.run=start(self.db,self.e.s,name='Session strategy · stocks / crypto · 5% allocation')
+            self.e.run=start(self.db,self.e.s,name=f'Session strategy · stocks / crypto · {allocation_pct(self.e.s):g}% allocation')
         self.restore_schedule()
         self.task=asyncio.create_task(self.loop(),name='session_strategy')
 
@@ -374,6 +382,7 @@ class Scalper:
             'cadence_seconds':{s:cadence(s) for s in SYMBOLS},'credit_blocked':self.state('credit_blocked'),
             'monthly_cap_usd':None,'billing_mode':'prepaid','accounts':self.pool.status(),
             'month_spent_usd':self.spend.spent(),'error':self.last_error,'readiness':self.readiness,
-            'risk':{'allocation_pct_per_position':5,'max_holding_minutes':30,'entry_cooldown_minutes':5},
+            'risk':{'allocation_pct_per_position':allocation_pct(self.e.s),'max_holding_minutes':30,'entry_cooldown_minutes':5,
+                'account_guard':self.e.executor.loss_guard if self.e.executor else None},
             'decisions':self.db.query('SELECT id,ts,symbol,action,decision_json,latency_ms FROM decisions WHERE qset_version=? ORDER BY id DESC LIMIT 30',[VERSION]),
             'last_call':self.db.one('SELECT id,credential_id,started_at,state,input_tokens,actual_usd,error FROM scalper_calls WHERE version=? ORDER BY started_at DESC LIMIT 1',[VERSION])}

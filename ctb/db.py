@@ -11,6 +11,15 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS account_loss_guards (
+  account_id TEXT PRIMARY KEY, anchor_equity TEXT NOT NULL, captured_at REAL NOT NULL,
+  source TEXT NOT NULL, breached_at REAL, breach_reference TEXT, breach_equity TEXT, breach_limit_pct TEXT
+);
+CREATE TABLE IF NOT EXISTS account_equity_snapshots (
+  account_id TEXT NOT NULL, minute INTEGER NOT NULL, ts REAL NOT NULL,
+  equity REAL NOT NULL, cash REAL NOT NULL,
+  PRIMARY KEY (account_id, minute)
+);
 CREATE TABLE IF NOT EXISTS decisions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts REAL NOT NULL,

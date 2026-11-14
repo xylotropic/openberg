@@ -82,7 +82,6 @@ def make_app(engine: Engine) -> web.Application:
     routes = web.RouteTableDef()
     research = None
     manual = None
-    equity_cache = {}
 
     def manual_trading():
         nonlocal manual
@@ -600,23 +599,22 @@ def make_app(engine: Engine) -> web.Application:
             return j({'error':'Connect the Alpaca paper account first'},400)
         period=req.query.get('period','1W')
         if period not in ('1D','1W','1M'): return j({'error':'Choose 1D, 1W or 1M'},400)
-        key=(engine.executor.account_id,period)
-        if key not in equity_cache or time.time()-equity_cache[key]['at']>30:
-            try:
-                raw=await engine.executor.client.request('GET','/v2/account/portfolio/history',params={
-                    'period':period,'timeframe':'1D' if period=='1M' else '1Min' if period=='1D' else '15Min',
-                    'intraday_reporting':'continuous','pnl_reset':'no_reset'})
-                import math
-                points={int(t):float(v) for t,v in zip(raw.get('timestamp',[]),raw.get('equity',[]))
-                    if type(t) in (int,float) and type(v) in (int,float) and math.isfinite(t) and math.isfinite(v) and t>0 and v>=0}
-                equity_cache[key]={'at':time.time(),'points':sorted(points.items())}
-            except Exception as exc: return j({'error':str(exc)},502)
-        points=list(equity_cache[key]['points'])
         ex=engine.executor
+        days,step={'1D':(1,1),'1W':(7,5),'1M':(30,60)}[period]
+        now=time.time()
+        rows=engine.db.query('SELECT s.ts,s.equity FROM account_equity_snapshots s JOIN '
+            '(SELECT MAX(minute) minute FROM account_equity_snapshots WHERE account_id=? AND ts>=? '
+            'GROUP BY CAST(minute / ? AS INTEGER)) b ON s.minute=b.minute WHERE s.account_id=? ORDER BY s.ts',
+            [ex.account_id,now-days*86400,step,ex.account_id])
+        current=None
         if not ex.sync_error and time.time()-ex.last_sync<60 and ex.wallet.get('equity') is not None:
-            current=(int(ex.last_sync),float(ex.wallet['equity']))
-            if not points or current[0]>points[-1][0]: points.append(current)
-        return j({'points':points,'currency':'USD','period':period,'source':'Alpaca paper account','as_of':points[-1][0] if points else None})
+            current=(getattr(ex,'account_observed_at',ex.last_sync),ex.wallet['equity'])
+        from .broker.equity import equity_series
+        series=equity_series({'timestamp':[r['ts'] for r in rows],'equity':[r['equity'] for r in rows]},now=now,current=current)
+        points=series['points']
+        return j({**series,'currency':'USD','period':period,'source':'Recorded Alpaca account snapshots',
+            'as_of':points[-1][0] if points else None,'coverage_start':points[0][0] if points else None,
+            'basis':'Observed broker account equity, including fees, cash movements and all activity. History begins when recording starts.'})
 
     # ---------------------------------------------------------------- keys
     @routes.get("/api/keys")

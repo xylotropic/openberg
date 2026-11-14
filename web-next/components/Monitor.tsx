@@ -10,6 +10,7 @@ import { ask, setPosCap, useNow } from "./TopBar";
 const Ph = ({ code, children, right }: { code: string; children?: React.ReactNode; right?: React.ReactNode }) => (
   <div className="ph"><span className="code">{code}</span>{children}{right !== undefined && <span className="ph-r">{right}</span>}</div>
 );
+const positionPrice = (value: number | null) => fx(value, value != null && Math.abs(Number(value)) < 1 ? 8 : 2);
 
 export function MonitorView({ hidden }: { hidden: boolean }) {
   const sessionStrategy=useStore(s=>s.ov?.settings.scalper_enabled);
@@ -298,13 +299,14 @@ function Account() {
     ["Unrealised", <span key="u" className={ud(w.unrealized_pnl)}>{sg(w.unrealized_pnl)}</span>, ({flat:"USD · flat",live:"USD · live bid/ask",mixed:"USD · mixed marks",broker:"USD · broker marks"} as Record<string,string>)[a.unrealized_basis] || "USD"],
     ["Today PnL", <span key="d" className={ud(a.daily_pnl)}>{sg(a.daily_pnl)}</span>, a.daily_pnl_available === false ? "Prior-day equity unavailable" : `halts at −${st.daily_loss_limit_pct}%`],
     ["Positions", <span key="p">{a.positions.length}/{st.max_positions} <button className="mini" onClick={() => setPosCap()} data-tip="Change the max number of open positions. Applies to new entries only.">CAP</button></span>, `${a.open_orders} open orders`],
-    [st.scalper_enabled ? "Allocation / trade" : "Risk / trade", `${st.scalper_enabled ? 5 : st.exploration_mode ? Math.min(st.explore_risk_pct, st.risk_per_trade_pct) : st.risk_per_trade_pct}%`, `entry cap ${st.max_entry_slip_bp}bp · ≤${st.max_leverage}x`],
+    [st.scalper_enabled ? "Allocation / trade" : "Risk / trade", `${st.scalper_enabled ? st.scalper_allocation_pct : st.exploration_mode ? Math.min(st.explore_risk_pct, st.risk_per_trade_pct) : st.risk_per_trade_pct}%`, `entry cap ${st.max_entry_slip_bp}bp · ≤${st.max_leverage}x`],
   ];
   return (
     <>
       <Ph code="PRTU" right={a.last_sync ? `${a.private_stream ? "stream" : "poll"} · sync ${age(now / 1000 - a.last_sync)} ago` : ""}>Account · Alpaca paper</Ph>
       <div className="pb tight" style={{ flex: "none" }}>
         <div className="acct-grid">{cells.map(([l, n, s]) => <div className="cell" key={l}><div className="l">{l}</div><div className="n">{n}</div><div className="s">{s}</div></div>)}</div>
+        {a.loss_guard && <div className={a.loss_guard.blocked ? "dn" : "muted"} data-tip="Entry circuit breaker against the stored account reference and any valid broker prior close. Includes cash movements and all account activity; not strategy P&L.">ACCOUNT GUARD · {a.loss_guard.blocked ? a.loss_guard.reason : `${a.loss_guard.limit_pct}% · entry floor $${fx(a.loss_guard.entry_floor)}`}</div>}
       </div>
       <div className="ph sub"><span className="code">PST</span>Positions</div>
       <div className="pb tight scroll">
@@ -315,8 +317,8 @@ function Account() {
               {a.positions.map((x: any) => (
                 <tr key={x.symbol}>
                   <td className="sym">{short(x.symbol)}</td><td><span className={`tag ${x.side}`}>{x.side.toUpperCase()}</span></td>
-                  <td className="r">{x.size}</td><td className="r">{x.entry}</td><td className="r" data-tip={x.mark_stale ? "Broker mark · live quote unavailable" : `Live ${x.side === "long" ? "bid" : "ask"}`}>{x.mark}{x.mark_stale && <span className="tag amb"> BROKER</span>}</td>
-                  <td className={`r ${ud(x.upnl)}`} data-tip="Unrealized estimate before fees">{sg(x.upnl)}</td><td className="r">{x.sl || <span className="dn">NONE</span>}</td><td className="r">{x.tp || "—"}</td>
+                  <td className="r">{x.size}</td><td className="r">{positionPrice(x.entry)}</td><td className="r" data-tip={x.mark_stale ? "Broker mark · live quote unavailable" : `Live ${x.side === "long" ? "bid" : "ask"}`}>{positionPrice(x.mark)}{x.mark_stale && <span className="tag amb"> BROKER</span>}</td>
+                  <td className={`r ${ud(x.upnl)}`} data-tip="Unrealized estimate before fees">{sg(x.upnl)}</td><td className="r">{x.sl ? positionPrice(x.sl) : <span className="dn">NONE</span>}</td><td className="r">{x.tp ? positionPrice(x.tp) : "—"}</td>
                   <td>{x.owner === "alpha" ? <button className="mini" onClick={() => setState({ view: "alpha" })}>ALPHA</button> : x.owned ? <button className="mini" onClick={() => closePos(x.symbol)}>CLOSE</button> : <span className="muted">{x.owner === "manual" ? "MANUAL" : "EXTERNAL"}</span>}</td>
                 </tr>
               ))}

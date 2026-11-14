@@ -29,6 +29,7 @@ class AlpacaExecutor(Executor):
         self.clock: dict = {}
         self.kill_requested = False
         self.coordinator = None
+        self.loss_guard = {'ready': False, 'blocked': True, 'reason': 'Waiting for account loss reference'}
         from .manual import ManualTrading
         self.manual = ManualTrading(self)
 
@@ -51,19 +52,26 @@ class AlpacaExecutor(Executor):
                 expected = self.s.alpaca_account_id
                 if expected and a['id'] != expected:
                     raise ValueError('Alpaca account does not match the configured harness paper account')
-                self.account_id, self.account, self.clock = a['id'], a, clock
-                self.raw_positions = positions
-                self.wallet = {"equity": float(a['equity']), "available": max(0.0, float(a['buying_power'])),
+                wallet = {"equity": float(a['equity']), "available": max(0.0, float(a['buying_power'])),
                                "cash": float(a['cash']), "unrealized_pnl": sum(float(p['unrealized_pl']) for p in positions),
                                "currency": "USD"}
-                self.positions = [{"symbol": p['symbol'], "side": "Buy" if p['side'] == 'long' else "Sell",
+                normalized = [{"symbol": p['symbol'], "side": "Buy" if p['side'] == 'long' else "Sell",
                                    "size": abs(float(p['qty'])), "avgPrice": float(p['avg_entry_price']),
                                    "markPrice": float(p['current_price']), "unrealisedPnl": float(p['unrealized_pl']),
                                    "positionValue": abs(float(p['market_value']))} for p in positions]
                 # Alpaca position symbols may omit crypto's slash.
-                for p in self.positions:
+                for p in normalized:
                     p['symbol'] = next((s for s in self.s.symbols if s.replace('/', '') == p['symbol'].replace('/', '')), p['symbol'])
+                if not all(math.isfinite(v) for v in wallet.values() if isinstance(v, (int, float))):
+                    raise ValueError('Nonfinite broker wallet')
+                if not all(math.isfinite(v) for p in normalized for v in p.values() if isinstance(v, (int, float))):
+                    raise ValueError('Nonfinite broker position')
+                self.account_id, self.account, self.clock = a['id'], a, clock
+                self.raw_positions, self.wallet, self.positions = positions, wallet, normalized
                 self.open_orders, self.last_sync, self.sync_error = orders, time.time(), None
+                self.account_observed_at=float(a.get('_observed_at',self.last_sync))
+                from .account_guard import update
+                self.loss_guard = update(self.db, self.s, a, now=self.last_sync)
             except Exception as exc:
                 self.sync_error = str(exc)
 
@@ -125,7 +133,9 @@ class AlpacaExecutor(Executor):
             decision = self.db.one('SELECT * FROM decisions WHERE id=?',[decision_id])
             candle = bool(decision and decision.get('qset_version') == 'candles-session-v1')
             if candle:
-                from ..scalper import SYMBOLS, packet
+                from ..scalper import SYMBOLS, packet, allocation_pct
+                try: allocation=allocation_pct(self.s)/100
+                except (ValueError,TypeError): return {'ok':False,'reason':'Session allocation is invalid'}
                 if not self.s.scalper_enabled or symbol not in SYMBOLS or symbol not in self.s.symbols:
                     return {'ok':False,'reason':'Session strategy is not active on this symbol'}
                 if time.time()-(decision.get('decision_json') or {}).get('signal_at',0)>25:
@@ -178,7 +188,9 @@ class AlpacaExecutor(Executor):
             risk_pct, sizing = risk_pct_for(self.s, exploration=exploration, ev_r=ev_r, vol_state=vol_state,
                                            run_drawdown_pct=self.run_drawdown_pct(), same_side_corr=correlations)
             risk = eq * risk_pct / 100
-            if candle: risk = eq*.05*(sl_bp/10000)
+            if candle:
+                risk = eq*allocation*(sl_bp/10000)
+                sizing={'method':'portfolio_allocation','allocation_pct':allocation*100,'equity':eq,'target_notional':eq*allocation}
             open_risk = sum(float(t.get('risk_usd') or 0) for t in self.owned())
             risk = min(risk, max(0, eq * self.s.max_open_risk_pct / 100 - open_risk))
             if sum(t['side'] == side for t in self.owned()) >= self.s.max_same_side:
@@ -186,7 +198,7 @@ class AlpacaExecutor(Executor):
             available = max(0.0, float(self.account['cash'])) if kind == 'crypto' else self.wallet['available']
             notional = min(risk / (sl_bp / 10000), self.s.max_notional_usdt, available * .9, eq * self.s.max_leverage * .9)
             if candle:
-                notional=min(eq*.05,risk/(sl_bp/10000),available*.9,eq*self.s.max_leverage*.9)
+                notional=min(eq*allocation,risk/(sl_bp/10000),available*.9,eq*self.s.max_leverage*.9)
             step = float(asset.get('min_trade_increment') or 1e-8) if kind == 'crypto' else 1.0
             dec_step = Decimal(str(step))
             qty = float((Decimal(str(notional)) / Decimal(str(ref)) / dec_step).to_integral_value(rounding=ROUND_DOWN) * dec_step)
@@ -519,21 +531,30 @@ class AlpacaExecutor(Executor):
             await self.close(t['symbol'], 'kill')
 
     def daily_pnl(self):
-        equity = float(self.account.get('equity') or 0)
-        previous = float(self.account.get('last_equity') or equity)
-        return equity - previous
+        try:
+            equity = float(self.account.get('equity') or 0)
+            previous = float(self.account.get('last_equity') or 0)
+            return equity - previous if previous > 0 and math.isfinite(previous) else 0
+        except (TypeError,ValueError): return 0
+
+    def loss_limit_reason(self):
+        return self.loss_guard.get('reason') if self.loss_guard.get('blocked', True) else None
 
     def account_view(self):
         view = super().account_view()
         from .display import mark_positions,mark_basis
         view['view_at']=time.time()
+        view['loss_guard']=self.loss_guard
         view['wallet']=dict(view['wallet'])
         view['positions']=mark_positions(view['positions'],self.feed.store,time.time())
         view['wallet']['broker_unrealized_pnl']=view['wallet'].get('unrealized_pnl')
         view['wallet']['unrealized_pnl']=sum(p['upnl'] for p in view['positions'])
         view['unrealized_basis']=mark_basis(view['positions'])
         # A zero prior-day equity on a newly funded paper account is not a gain.
-        view['daily_pnl_available']=float(self.account.get('last_equity') or 0)>0
+        try:
+            previous=float(self.account.get('last_equity') or 0)
+            view['daily_pnl_available']=math.isfinite(previous) and previous>0
+        except (TypeError,ValueError): view['daily_pnl_available']=False
         if not view['daily_pnl_available']: view['daily_pnl']=None
         owned = {t['symbol']: t for t in self.owned()}
         for p in view['positions']:
