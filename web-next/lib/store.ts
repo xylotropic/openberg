@@ -4,7 +4,7 @@
 import { useSyncExternalStore } from "react";
 
 export type Tick = { last?: string; mark?: string; bid?: string; ask?: string; testnet_last?: string; pct24h?: number | null; ts: number };
-export type Book = { symbol: string; bids: [number, number][]; asks: [number, number][]; ts: number };
+export type Book = { symbol: string; bids: [number, number][]; asks: [number, number][]; ts: number; source_ts?: number; depth?: boolean; source?: string; state?: string };
 export type Bar = { symbol: string; tf: string; time: number; open: number; high: number; low: number; close: number; volume: number };
 
 export type State = {
@@ -18,7 +18,8 @@ export type State = {
   perf: Record<string, [number, number][]>;
   symbol: string | null;
   tf: string;
-  view: "mon" | "eval" | "valid" | "trades" | "news" | "log" | "options" | "filings";
+  view: "mon" | "eval" | "valid" | "trades" | "news" | "log" | "options" | "filings" | "manual";
+  manualDraft: { symbol: string; side?: "buy" | "sell"; qty?: string; limit_price?: string } | null;
   ticks: Record<string, Tick>;
   book: Book | null;
   socket: { connected: boolean; lastMsg: number; latencyMs: number | null; msgs: number };
@@ -29,7 +30,7 @@ export type State = {
 
 let state: State = {
   ov: null, mon: null, mkt: null, marketError: null, decisions: [], latest: {}, news: { forecasts: [], headlines: [] }, perf: {},
-  symbol: null, tf: "5", view: "mon", ticks: {}, book: null,
+  symbol: null, tf: "5", view: "mon", manualDraft: null, ticks: {}, book: null,
   socket: { connected: false, lastMsg: 0, latencyMs: null, msgs: 0 }, modal: null, cmdHint: null,
   rev: { trades: 0, events: 0, eval: 0 },
 };

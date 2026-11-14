@@ -9,6 +9,7 @@ import { Modals } from "./Modals";
 import { ValidationView } from "./Validation";
 import { FilingsView, NewsroomView, OptionsView } from "./Research";
 import { Tip } from "./Tip";
+import { ManualView } from "./Manual";
 
 /** Polls only what has no push channel; everything that moves arrives over /ws. */
 function every(ms: number, fn: () => Promise<unknown>) {
@@ -38,7 +39,7 @@ export default function Terminal() {
       ];
     })();
     const onKey = (e: KeyboardEvent) => {
-      const fk = ({ F1: "mon", F2: "eval", F3: "trades", F4: "news", F5: "log", F6: "valid", F7: "options", F8: "filings" } as const)[e.key as "F1"];
+      const fk = ({ F1: "mon", F2: "eval", F3: "trades", F4: "news", F5: "log", F6: "valid", F7: "options", F8: "filings", F9: "manual" } as const)[e.key as "F1"];
       if (fk) {
         e.preventDefault();
         setState({ view: fk });
@@ -70,6 +71,7 @@ export default function Terminal() {
           {view === "valid" && <ValidationView />}
           {view === "trades" && <TradesView />}
           {view === "news" && <NewsroomView />}
+          {view === "manual" && <ManualView />}
           {view === "options" && <OptionsView />}
           {view === "filings" && <FilingsView />}
           {view === "log" && <LogView />}

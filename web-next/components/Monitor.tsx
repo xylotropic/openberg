@@ -150,6 +150,7 @@ function ChartHeader() {
         {Object.entries(TFL).map(([k, l]) => <button key={k} className={k === tf ? "on" : ""} onClick={() => selectTf(k)}>{l}</button>)}
       </span>
       <span className="legend"><i style={{ ["--c" as any]: "var(--amber)" }} />EMA20 <i style={{ ["--c" as any]: "var(--s1)" }} />EMA50 <i className="tri" /><ModelName /></span>
+      {symbol && (["buy", "sell"] as const).map(side => <button key={side} className={`mini ${side === "buy" ? "up" : "dn"}`} onClick={() => setState({ view: "manual", manualDraft: { symbol, side, qty: symbol.includes("/") ? "0.0001" : "1" } })}>{side.toUpperCase()}</button>)}
       <span className="ph-r">ALPACA · {mkt?.ticker?.dataFeed || "—"}</span>
     </div>
   );
@@ -403,14 +404,17 @@ function DepthChart({ bids, asks, d }: { bids: [number, number][]; asks: [number
   );
 }
 
-function BookPanel() {
+export function BookPanel() {
   const book = useStore((s) => s.book);
   const mkt = useStore((s) => s.mkt);
   const symbol = useStore((s) => s.symbol);
   const now = useNow(500);
+  const marketOpen = useStore(s => s.ov?.account?.market_clock?.is_open);
   const b = book && book.symbol === symbol ? book : mkt?.symbol === symbol ? mkt?.book : null;
-  const d = Math.max(String(mkt?.ticker?.lastPrice ?? "").split(".")[1]?.length || 0, 0);
-  const head = <Ph code="DOM" right={book?.ts ? `push ${age((now - book.ts) / 1000)} ago` : ""}>Top of book · Alpaca</Ph>;
+  const d = Math.max(String(mkt?.ticker?.lastPrice ?? "").split(".")[1]?.length || 0, 2);
+  const quoteAge = b?.source_ts ? now / 1000 - b.source_ts : null;
+  const status = !symbol?.includes("/") && !marketOpen ? "CLOSED" : b?.state === "live" && quoteAge !== null && quoteAge < 10 ? "LIVE" : b?.state === "live" ? "STALE" : b?.state?.toUpperCase() || "CONNECTING";
+  const head = <Ph code="DOM" right={<span className={status === "LIVE" ? "up" : "muted"}>{status}{quoteAge !== null ? ` · ${age(quoteAge)}` : ""}</span>}>{symbol} · {b?.depth ? "Order book" : "Best bid / ask"} · {b?.source || "Alpaca"}</Ph>;
   if (!b?.bids?.length || !b?.asks?.length) return <>{head}<div className="empty">Book loading…</div></>;
   const bids = b.bids as [number, number][], asks = b.asks as [number, number][];
   const bb = bids[0][0], ba = asks[0][0], mid = (bb + ba) / 2, spr = (10000 * (ba - bb)) / mid;
@@ -458,7 +462,7 @@ function BookPanel() {
 
 /* ---------------------------------------------------------------- news, tape */
 function NewsMini() {
-  const items: any[] = useStore((s) => s.mon?.news) || [];
+  const items: any[] = useStore((s) => s.news.headlines);
   const forecasts = useStore((s) => s.news.forecasts);
   const symbol = useStore((s) => s.symbol);
   const fc: Record<string, any> = {};
@@ -471,7 +475,7 @@ function NewsMini() {
         const f = fc[h.id];
         const lean = f ? f.probs_json.slice(4).reduce((a: number, b: number) => a + b, 0) - f.probs_json.slice(0, 3).reduce((a: number, b: number) => a + b, 0) : null;
         return (
-          <tr key={h.id} className="click" onClick={() => h.link && window.open(h.link, "_blank", "noopener")}>
+          <tr key={h.id} className="click" onClick={() => (h.url || h.link) && window.open(h.url || h.link, "_blank", "noopener")}>
             <td className="muted">{h.published_ts ? hhmm(h.published_ts) : "--:--"}</td><td className="amb">{src[h.source] || "NW"}</td>
             <td className="wrap" style={h.symbols.includes(symbol) ? { color: "var(--amber)" } : undefined}>
               {h.title} {h.symbols.map((s: string) => <span key={s} className="tag flat">{short(s)}</span>)}

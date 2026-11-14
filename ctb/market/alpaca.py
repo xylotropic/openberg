@@ -1,7 +1,7 @@
 """Alpaca IEX stocks, spot crypto and indicative options. No invented flow or derivatives.
 
-REST polling avoids consuming the account's single free market-data WebSocket connection.
-Closed-bar decisions and the browser WebSocket still use the shared harness engine.
+One shared upstream socket per feed serves every browser tab. REST backfills keep
+historical bars and account-clock context available through reconnects.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import Any
 
 from ..broker.alpaca import AlpacaPaper, asset_class, timestamp
 from .store import Bar, MarketStore, TIMEFRAMES
+from .stream import AlpacaStream
 
 
 class AlpacaFeed:
@@ -21,9 +22,91 @@ class AlpacaFeed:
         self._sem = asyncio.Semaphore(4)
         self.clock: dict[str, Any] = {"is_open": False}
         self._last_minute = int(time.time() // 60)
+        self._books = {}
+        self._depth_ts = {}
+        self._trade_ts = {}
+        self.streams = []
+        self._callbacks = set()
 
     def stop(self):
         self._stop.set()
+        for stream in self.streams:
+            stream.stop()
+
+    def stream_status(self, kind, state, error):
+        statuses = self.store.context.setdefault('market_streams', {})
+        statuses[kind] = {'state': state, 'error': error, 'changed_at': time.time()}
+        self.store.ws_connected = any(s['state'] == 'live' for s in statuses.values())
+        if state != 'live':
+            for sym in self.store.symbols:
+                if asset_class(sym) == kind:
+                    if self._books.pop(sym, None):
+                        self.store[sym].bids, self.store[sym].asks = [], []
+                        self.store[sym].book_ts = 0
+                    self._depth_ts.pop(sym, None)
+        if error:
+            self.store.record_error('alpaca:stream:' + kind, error)
+
+    def book_info(self, symbol):
+        kind = asset_class(symbol)
+        status = self.store.context.get('market_streams', {}).get(kind, {})
+        depth = symbol in self._books
+        return {'source': 'Alpaca US' if kind == 'crypto' else 'IEX' if kind == 'us_equity' else 'INDICATIVE',
+                'depth': depth, 'state': status.get('state', 'polling')}
+
+    async def stream_message(self, message):
+        sym, kind = message.get('S'), message.get('T')
+        if sym not in self.store.state:
+            return
+        st = self.store[sym]
+        ts = timestamp(message.get('t'))
+        if kind == 'o':
+            if message.get('r'):
+                self._books[sym] = ({}, {})
+            if sym not in self._books or (not message.get('r') and ts < self._depth_ts.get(sym, 0)):
+                return
+            bids, asks = self._books[sym]
+            for levels, field in ((bids, 'b'), (asks, 'a')):
+                for row in message.get(field, []):
+                    if row['s'] == 0:
+                        levels.pop(row['p'], None)
+                    else:
+                        levels[row['p']] = row['s']
+            st.bids, st.asks = sorted(bids.items(), reverse=True), sorted(asks.items())
+            st.book_ts = ts
+            self._depth_ts[sym] = ts
+            if st.bids and st.asks:
+                st.ticker.update(bid1Price=st.bids[0][0], ask1Price=st.asks[0][0])
+        elif kind == 'q':
+            if ts < st.book_ts:
+                return
+            st.ticker.update(bid1Price=message.get('bp'), ask1Price=message.get('ap'))
+            if sym not in self._books:
+                scale = 100 if asset_class(sym) == 'us_equity' else 1
+                st.bids = [(message['bp'], message.get('bs', 0) * scale)] if message.get('bp') else []
+                st.asks = [(message['ap'], message.get('as', 0) * scale)] if message.get('ap') else []
+                st.book_ts = ts
+        elif kind == 't' and ts >= self._trade_ts.get(sym, 0):
+            st.ticker['lastPrice'] = message['p']
+            self._trade_ts[sym] = ts
+        elif kind in ('b', 'u'):
+            # Official minute aggregates; higher timeframes retain the REST backfill.
+            bar = Bar(int(ts * 1000), message['o'], message['h'], message['l'], message['c'],
+                      message['v'], message['v'] * message.get('vw', message['c']), closed=True)
+            closed = st.upsert_bar('1', bar)
+            if closed:
+                for fn in self.on_bar_close:
+                    task = asyncio.create_task(fn(sym, '1'))
+                    self._callbacks.add(task)
+                    def finished(task):
+                        self._callbacks.discard(task)
+                        if not task.cancelled() and task.exception():
+                            self.store.record_error('alpaca:bar_callback', type(task.exception()).__name__)
+                    task.add_done_callback(finished)
+        st.last_update = max(st.last_update, ts)
+        st.testnet_ticker = dict(st.ticker)
+        self.store.ws_messages += 1
+        self.store.ws_last_msg = time.time()
 
     def decision_ready(self, symbol: str) -> tuple[bool, str]:
         st = self.store[symbol]
@@ -84,24 +167,50 @@ class AlpacaFeed:
                 if not price:
                     continue
                 change = price / prev["c"] - 1 if prev.get("c") else None
-                st.ticker = {"lastPrice": price, "bid1Price": q.get("bp"), "ask1Price": q.get("ap"),
+                if timestamp(trade.get('t')) < self._trade_ts.get(sym, 0):
+                    price = st.ticker.get('lastPrice') or price
+                else:
+                    self._trade_ts[sym] = timestamp(trade.get('t'))
+                st.ticker = {**st.ticker, "lastPrice": price,
                              "price24hPcnt": change, "turnover24h": day.get("v", 0) * day.get("vw", price),
                              "dataFeed": "indicative" if kind == "option" else "iex" if kind == "us_equity" else "alpaca-us"}
+                if timestamp(q.get('t')) >= st.book_ts and sym not in self._books:
+                    st.ticker.update(bid1Price=q.get('bp'), ask1Price=q.get('ap'))
+                    st.book_ts = timestamp(q.get('t'))
+                    scale = 100 if kind == 'us_equity' else 1
+                    st.bids = [(q['bp'], q.get('bs', 0) * scale)] if q.get('bp') else []
+                    st.asks = [(q['ap'], q.get('as', 0) * scale)] if q.get('ap') else []
                 # Same quote source powers paper execution; no second synthetic venue.
                 st.testnet_ticker = dict(st.ticker)
-                st.last_update = max(timestamp(trade.get("t")), timestamp(q.get("t")))
-                st.book_ts = timestamp(q.get("t"))
-                scale = 100 if kind == "us_equity" else 1
-                st.bids = [(q["bp"], q.get("bs", 0) * scale)] if q.get("bp") else []
-                st.asks = [(q["ap"], q.get("as", 0) * scale)] if q.get("ap") else []
+                st.last_update = max(st.last_update, timestamp(trade.get("t")), timestamp(q.get("t")))
                 universe.append({"symbol": sym, "last": price, "pct24h": change * 100 if change is not None else None,
                                  "turnover24h": st.ticker["turnover24h"], "oi_value": None, "funding": None})
                 self.store.ws_messages += 1
         self.store.context.update(universe=universe, universe_all=universe, universe_ts=time.time())
-        self.store.ws_connected = True
-        self.store.ws_last_msg = time.time()
 
     async def poll_loop(self):
+        tasks = [asyncio.create_task(self.backfill_loop())]
+        for kind, path in [('crypto', 'v1beta3/crypto/us'), ('us_equity', 'v2/iex')]:
+            symbols = [s for s in self.store.symbols if asset_class(s) == kind]
+            if not symbols:
+                continue
+            channels = {'quotes': symbols, 'trades': symbols, 'bars': symbols}
+            if kind == 'crypto':
+                channels['orderbooks'] = symbols
+            stream = AlpacaStream(self.client, 'wss://stream.data.alpaca.markets/' + path,
+                                  lambda channels=channels: channels, self.stream_message,
+                                  lambda state, error, kind=kind: self.stream_status(kind, state, error))
+            self.streams.append(stream)
+            tasks.append(asyncio.create_task(stream.run()))
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            tasks.extend(self._callbacks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def backfill_loop(self):
         while not self._stop.is_set():
             try:
                 if self.client.configured:
@@ -116,7 +225,6 @@ class AlpacaFeed:
                                 self.store.record_error(f"bars:{sym}:{tf}", str(exc))
                         await asyncio.gather(*(refresh(sym, tf) for sym in self.store.symbols for tf in TIMEFRAMES))
             except Exception as exc:
-                self.store.ws_connected = False
                 self.store.record_error("alpaca", str(exc))
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=10)

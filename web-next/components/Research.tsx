@@ -1,9 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, post } from "@/lib/api";
+import { api } from "@/lib/api";
 import { fx, px } from "@/lib/format";
-import { loadOverview } from "@/lib/data";
-import { useStore } from "@/lib/store";
+import { setState, useStore } from "@/lib/store";
 
 type Data = Record<string, any>;
 const ErrorLine = ({ text }: { text: string }) => text ? <div className="alert crit" role="alert">{text}</div> : null;
@@ -105,23 +104,12 @@ export function OptionsView() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [selected, setSelected] = useState("");
-  const [limit, setLimit] = useState("");
-  const [qty, setQty] = useState(1);
-  const [result, setResult] = useState("");
   const load = async (token = "") => {
     setBusy(true); setError("");
     try { setData(await api(`/api/options?underlying=${encodeURIComponent(underlying)}&expiry=${expiry}&type=${kind}${token ? `&page_token=${encodeURIComponent(token)}` : ""}`)); }
     catch (e: any) { setError(e.message); } finally { setBusy(false); }
   };
   useEffect(() => { void load(); }, []);
-  const submit = async () => {
-    const debit = Number(limit) * qty * 100;
-    if (!confirm(`Submit Alpaca PAPER order: BUY ${qty} ${selected} at a limit premium of $${limit}? Maximum debit: $${debit.toFixed(2)}. Quotes shown are indicative. The whole premium is at risk.`)) return;
-    setBusy(true); setError(""); setResult("");
-    try { const r = await post("/api/options/order", { symbol: selected, qty, limit_price: Number(limit) }); setResult(`PAPER ORDER ${r.order_id} · ${r.status}`); await loadOverview(); }
-    catch (e: any) { setError(e.message); } finally { setBusy(false); }
-  };
   const open = !!account?.market_clock?.is_open;
   return <main className="view on research-view">
     <div className="toolbar"><b>Options</b><span className="tag long">ALPACA PAPER · LEVEL {account?.options_trading_level ?? "—"}</span>
@@ -134,16 +122,9 @@ export function OptionsView() {
     <section className="pnl"><div className="ph"><span className="code">CHAIN</span>{data?.underlying || underlying} options<span className="ph-r">{open ? "US MARKET OPEN" : "US MARKET CLOSED"} · {Object.keys(data?.items || {}).length} contracts</span></div>
       <div className="research-table"><table className="t"><thead><tr><th>Contract</th><th>Expiry</th><th>Type</th><th className="r">Strike</th><th className="r">Bid</th><th className="r">Ask</th><th className="r">Last</th><th className="r">IV</th><th className="r">Delta</th><th className="r">Theta</th><th /></tr></thead><tbody>{Object.entries<Data>(data?.items || {}).map(([s, o]) => {
         const d = optionDetails(s), q = o.latestQuote || {}, g = o.greeks || {};
-        return <tr key={s} className={s === selected ? "sel" : ""}><td className="sym">{s}</td><td>{d.expiry}</td><td className="amb">{d.type}</td><td className="r">{fx(d.strike)}</td><td className="r">{px(q.bp)}</td><td className="r">{px(q.ap)}</td><td className="r">{px(o.latestTrade?.p)}</td><td className="r">{fx(o.impliedVolatility, 3)}</td><td className="r">{fx(g.delta, 3)}</td><td className="r">{fx(g.theta, 3)}</td><td><button className="mini" onClick={() => { setSelected(s); setLimit(String(q.ap || o.latestTrade?.p || "")); setResult(""); }}>SELECT</button></td></tr>;
+        return <tr key={s}><td className="sym">{s}</td><td>{d.expiry}</td><td className="amb">{d.type}</td><td className="r">{fx(d.strike)}</td><td className="r">{px(q.bp)}</td><td className="r">{px(q.ap)}</td><td className="r">{px(o.latestTrade?.p)}</td><td className="r">{fx(o.impliedVolatility, 3)}</td><td className="r">{fx(g.delta, 3)}</td><td className="r">{fx(g.theta, 3)}</td><td><button className="mini" onClick={() => setState({ view: "manual", manualDraft: { symbol: s, side: "buy", qty: "1", limit_price: String(q.ap || o.latestTrade?.p || "") } })}>TRADE</button></td></tr>;
       })}</tbody></table></div>
       <div className="research-pagination"><button className="kbtn" disabled={busy || !data?.next_page_token} onClick={() => void load(data!.next_page_token)}>NEXT CONTRACTS</button></div>
-    </section>
-    <section className="pnl option-ticket"><div className="ph"><span className="code">ORDER</span>Long option · paper limit order</div>
-      <div className="toolbar"><span className="amb">{selected || "SELECT CONTRACT"}</span><label>CONTRACTS <input aria-label="Option contracts quantity" type="number" min="1" step="1" value={qty} onChange={e => setQty(Number(e.target.value))} /></label>
-        <label>LIMIT PREMIUM $ <input aria-label="Option limit premium" type="number" min="0.01" step="0.01" value={limit} onChange={e => setLimit(e.target.value)} /></label><span>MAX DEBIT ${fx(Number(limit) * qty * 100)}</span>
-        <button className="kbtn amber" disabled={busy || !open || !selected || !limit} onClick={() => void submit()}>REVIEW PAPER BUY</button></div>
-      {!open && <p className="muted">US MARKET CLOSED · CRYPTO OPEN</p>}
-      {result && <p className="up">{result}</p>}
     </section>
   </main>;
 }

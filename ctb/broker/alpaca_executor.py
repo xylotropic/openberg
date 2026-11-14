@@ -25,8 +25,11 @@ class AlpacaExecutor(Executor):
         self.feed = feed
         self.account_id = ""
         self.account: dict = {}
+        self.raw_positions = []
         self.clock: dict = {}
         self.kill_requested = False
+        from .manual import ManualTrading
+        self.manual = ManualTrading(self)
 
     def owned(self, symbol: str | None = None):
         return self.db.query("SELECT * FROM trades WHERE venue='alpaca' AND account_id=? "
@@ -48,6 +51,7 @@ class AlpacaExecutor(Executor):
                 if expected and a['id'] != expected:
                     raise ValueError('Alpaca account does not match the configured harness paper account')
                 self.account_id, self.account, self.clock = a['id'], a, clock
+                self.raw_positions = positions
                 self.wallet = {"equity": float(a['equity']), "available": max(0.0, float(a['buying_power'])),
                                "cash": float(a['cash']), "unrealized_pnl": sum(float(p['unrealized_pl']) for p in positions),
                                "currency": "USD"}
@@ -65,6 +69,14 @@ class AlpacaExecutor(Executor):
     def _order_symbol(self, order):
         return str(order.get('symbol', '')).replace('/', '')
 
+    def manual_pending(self, symbol):
+        if self.db.one('SELECT resource FROM manual_ownership WHERE account_id=? AND resource=? LIMIT 1',
+                       [self.account_id, symbol.replace('/', '')]):
+            return True
+        return any(self._order_symbol(r) == symbol.replace('/', '') for r in self.db.query(
+            "SELECT symbol FROM manual_orders WHERE account_id=? AND attempted_ts IS NOT NULL "
+            "AND status NOT IN ('filled','canceled','expired','rejected','replaced')", [self.account_id]))
+
     def ownership_ok(self, t, position) -> bool:
         if not position:
             return False
@@ -76,6 +88,8 @@ class AlpacaExecutor(Executor):
         async with self._entry_lock:
             await self.sync()
             reason = self.check_guards(symbol)
+            if self.manual_pending(symbol):
+                return {"ok": False, "reason": "A manual paper order on this symbol is pending reconciliation"}
             kind = asset_class(symbol)
             if reason:
                 return {"ok": False, "reason": reason}
@@ -344,6 +358,11 @@ class AlpacaExecutor(Executor):
         while True:
             try:
                 await self.sync()
+                if not self.sync_error:
+                    try:
+                        await self.manual.refresh()
+                    except Exception as exc:
+                        self.db.event('warn', 'manual_reconcile', type(exc).__name__)
                 if self.kill_requested:
                     await self.kill(self.halted_reason or 'kill requested')
                 if self.s.kill_file.exists():
@@ -415,6 +434,8 @@ class AlpacaExecutor(Executor):
         for p in view['positions']:
             t = owned.get(p['symbol'])
             p.update(owned=bool(t), sl=t.get('sl_price') if t else None, tp=t.get('tp_price') if t else None)
+            raw = next((r for r in self.raw_positions if r['symbol'].replace('/', '') == p['symbol'].replace('/', '')), {})
+            p['available_qty'] = str(abs(Decimal(str(raw.get('qty_available', raw.get('qty', p['size']))))))
         return {**view, "venue": "alpaca", "account_id": self.account_id, "currency": "USD", "paper": True,
                 "options_trading_level": self.account.get('options_trading_level'), "market_clock": self.clock,
                 "pnl_basis": "gross broker fills; fees unavailable"}
@@ -432,7 +453,7 @@ class AlpacaExecutor(Executor):
                 raise ValueError('Buying calls/puts requires Alpaca options Level 2 or higher')
             if self.halted_reason or self.s.kill_file.exists() or self.account.get('trading_blocked'):
                 raise ValueError('The paper executor is halted')
-            if self.position(symbol) or self.owned(symbol) or any(self._order_symbol(o) == symbol for o in self.open_orders):
+            if self.position(symbol) or self.owned(symbol) or self.manual_pending(symbol) or any(self._order_symbol(o) == symbol for o in self.open_orders):
                 raise ValueError('A position or order already exists on this contract')
             contract = await self.client.asset(symbol)
             if not contract.get('tradable'):

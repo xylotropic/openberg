@@ -298,9 +298,20 @@ dialog.keys { width: min(640px, 95vw); }
 .pb.tight > .t td:last-child, .pb.tight > .t th:last-child { padding-right: 10px; }
 
 /* ---------- Openberg */
+.brand-logo { width: 28px; height: 28px; display: grid; place-items: center; flex: none; background: #000; color: #fff; border: 1px solid #333; font: 900 22px/1 var(--cond); }
 .brand .brand-name { font: 600 15px/1 var(--cond); letter-spacing: -.01em; color: #fff; white-space: nowrap; }
 .chart-message { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: var(--muted); }
 .chart-message.error { color: var(--down); }
+.manual-grid { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr); gap: 10px; margin-bottom: 10px; }
+.manual-ticket fieldset { border: 0; padding: 14px; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.manual-ticket label { display: grid; gap: 5px; color: var(--muted); }
+.manual-ticket input, .manual-ticket select { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--line); background: var(--bar); color: var(--text); }
+.manual-side { align-self: end; display: flex; }
+.manual-side button { flex: 1; padding: 8px; }
+.order-review { margin: 0 14px 14px; padding: 14px; border: 1px solid var(--amber-dim); display: grid; gap: 8px; }
+.manual-book .pb { overflow: auto; max-height: 480px; }
+.manual-view > .pnl { margin-bottom: 10px; }
+@media (max-width: 760px) { .manual-grid { grid-template-columns: 1fr; } }
 
 /* VALID screen and STRATEGY dialog */
 .vchip { font: 600 11px var(--cond); letter-spacing: .05em; padding: 0 5px; border: 1px solid var(--line); }

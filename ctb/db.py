@@ -72,6 +72,29 @@ CREATE TABLE IF NOT EXISTS trades (
 );
 CREATE INDEX IF NOT EXISTS ix_trades_status ON trades(status);
 
+CREATE TABLE IF NOT EXISTS manual_orders (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  client_order_id TEXT NOT NULL UNIQUE,
+  created_ts REAL NOT NULL,
+  attempted_ts REAL,
+  inventory_seen_ts REAL,
+  status TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  review_json TEXT NOT NULL,
+  broker_json TEXT,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_manual_account ON manual_orders(account_id, created_ts);
+CREATE TABLE IF NOT EXISTS manual_ownership (
+  account_id TEXT NOT NULL,
+  resource TEXT NOT NULL,
+  position_symbol TEXT NOT NULL,
+  flat_since REAL,
+  PRIMARY KEY (account_id, resource, position_symbol)
+);
+
 CREATE TABLE IF NOT EXISTS news (
   id TEXT PRIMARY KEY,
   ts REAL,
@@ -151,7 +174,7 @@ TRADE_COLUMNS = {
 
 JSON_COLS = {"state_json", "questions_json", "answers_json", "parsed_json", "issues_json", "usage_json",
              "model_meta_json", "decision_json", "label_json", "probs_json", "fills_json", "config_json",
-             "sizing_json", "events_json", "exit_links_json"}
+             "sizing_json", "events_json", "exit_links_json", "request_json", "review_json", "broker_json"}
 
 
 class DB:
@@ -166,6 +189,9 @@ class DB:
         self.lock = threading.Lock()
 
     def _migrate(self) -> None:
+        mcols = {r[1] for r in self.conn.execute('PRAGMA table_info(manual_orders)')}
+        if 'inventory_seen_ts' not in mcols:
+            self.conn.execute('ALTER TABLE manual_orders ADD COLUMN inventory_seen_ts REAL')
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(decisions)")}
         if "run_id" not in cols:
             self.conn.execute("ALTER TABLE decisions ADD COLUMN run_id INTEGER")

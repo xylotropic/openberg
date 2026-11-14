@@ -101,6 +101,7 @@ export function connectSocket() {
       } else if (kind === "news") soon("news", loadNews, 500);
       else if (kind === "settings") soon("ov", loadOverview);
       else if (kind === "event") setState((s) => ({ rev: { ...s.rev, events: s.rev.events + 1 } }));
+      else if (kind === "manual_order") soon("ov", loadOverview);
     };
     ws.onclose = () => {
       setState((s) => ({ socket: { ...s.socket, connected: false } }));

@@ -58,11 +58,12 @@ export function CommandBar() {
     const tfm = ({ "1M": "1", "5M": "5", "15M": "15", "1H": "60", "4H": "240" } as Record<string, string>)[raw];
     const pc = raw.match(/^(?:POS|MAXPOS)\s+(\d+)$/);
     const ttf = raw.match(/^(?:TF|TRADE)\s+(1M|5M|15M|1H)$/);
-    const views: Record<string, any> = { MON: "mon", EVAL: "eval", VALID: "valid", VAL: "valid", TRD: "trades", TRADES: "trades", NEWS: "news", N: "news", LOG: "log", OPT: "options", OPTIONS: "options", FILINGS: "filings", SEC: "filings" };
+    const views: Record<string, any> = { MON: "mon", EVAL: "eval", VALID: "valid", VAL: "valid", TRD: "trades", TRADES: "trades", NEWS: "news", N: "news", LOG: "log", OPT: "options", OPTIONS: "options", FILINGS: "filings", SEC: "filings", TRADE: "manual", BUY: "manual", SELL: "manual" };
     if (pc) return setPosCap(Number(pc[1]));
     if (ttf) return setState({ modal: { kind: "tf", data: ({ "1M": "1", "5M": "5", "15M": "15", "1H": "60" } as any)[ttf[1]] } });
     if (sym) return selectSymbol(sym);
     if (tfm) return selectTf(tfm);
+    if (["TRADE", "BUY", "SELL"].includes(raw)) return setState({ view: "manual", manualDraft: { symbol: symbol || "SPY", side: raw === "SELL" ? "sell" : "buy", qty: symbol?.includes("/") ? "0.0001" : "1" } });
     if (views[raw]) return setState({ view: views[raw] });
     if (raw === "ASK" || raw === "PRB") return ask(raw === "PRB");
     if (raw === "KEYS") return setState({ modal: { kind: "keys" } });
@@ -97,6 +98,7 @@ export function CommandBar() {
   return (
     <header className="cmdbar">
       <div className="brand">
+        <span className="brand-logo" aria-hidden="true">O</span>
         <span className="brand-name">Openberg</span>
       </div>
       <form className="cmd" autoComplete="off" onSubmit={onSubmit}>
@@ -149,7 +151,7 @@ export async function setPosCap(v?: number) {
   }
 }
 
-const VIEWS = [["mon", "F1", "MON"], ["eval", "F2", "EVAL"], ["valid", "F6", "VALID"], ["trades", "F3", "TRADES"], ["news", "F4", "NEWSROOM"], ["log", "F5", "LOG"], ["options", "F7", "OPTIONS"], ["filings", "F8", "FILINGS"]] as const;
+const VIEWS = [["mon", "F1", "MON"], ["eval", "F2", "EVAL"], ["valid", "F6", "VALID"], ["trades", "F3", "TRADES"], ["news", "F4", "NEWSROOM"], ["log", "F5", "LOG"], ["options", "F7", "OPTIONS"], ["filings", "F8", "FILINGS"], ["manual", "F9", "TRADE"]] as const;
 
 export function FKeys() {
   const view = useStore((s) => s.view);
@@ -157,7 +159,7 @@ export function FKeys() {
   return (
     <nav className="fkeys">
       {VIEWS.map(([v, k, l]) => (
-        <button key={v} className={view === v ? "on" : ""} onClick={() => setState({ view: v })}><b>{k}</b>{l}</button>
+        <button key={v} className={view === v ? "on" : ""} onClick={() => setState({ view: v, ...(v === "manual" ? { manualDraft: { symbol: getState().symbol || "SPY", qty: getState().symbol?.includes("/") ? "0.0001" : "1" } } : {}) })}><b>{k}</b>{l}</button>
       ))}
       <span className="fk-spacer" />
       {st && (

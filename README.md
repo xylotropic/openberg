@@ -1,11 +1,13 @@
-# Local Alpaca + Drex edition
+# Openberg
 
 This checkout runs at **http://127.0.0.1:8800** with **Drex Max Finance** and a dedicated **Alpaca paper account**. It was imported from upstream commit `d9a3a62d1e64bfd28514e07ce6d300ec44654ddb`; no pre-existing local deployment was replaced.
 
-- **Stocks/ETFs:** Alpaca IEX historical bars and quotes. Forecasts and new orders pause outside regular US trading hours; forecast windows cannot extend beyond the market close. Overnight gaps are excluded from historical base-rate windows.
+- **Stocks/ETFs:** Alpaca IEX bars, live trades and best bid/ask. IEX quotes represent one exchange, not consolidated or full-depth stock data. New orders pause outside regular US trading hours.
 - **Crypto:** Alpaca US spot data and paper orders, long only. Broker-credited crypto quantity accounts for fees deducted in the purchased asset. Broker stop-limit backstops and managed targets/time exits protect harness positions.
-- **Options (F7):** Indicative free option chains, greeks, calls and puts. Explicitly reviewed long-option paper limit orders use whole contracts and the full premium as the risk budget. Automatic option entries are disabled with indicative data. Scheduled exits occur before the session closes to avoid holding into exercise.
-- **Newsroom (F4):** Alpaca news adapter with symbol filters, source links, publication times and pagination. No paid subscription is enabled.
+- **Options (F7):** Free indicative option chains and greeks. Choose a call or put to open the manual limit-order ticket. Automatic option entries remain disabled.
+- **Trade (F9):** Review and send manual paper buys/sells. Stocks and crypto support market and limit orders. Options support long calls/puts and sell-to-close limit orders. Positions and order status come from Alpaca. Manual orders have no automatic stop or time exit. Each persisted review can submit once. Ambiguous responses reconcile by the same client order ID. Closing crypto uses the exact available balance after fees.
+- **Order book:** Live Alpaca US crypto depth uses reset snapshots and incremental updates. Stocks show IEX best bid/ask. The ladder displays source time and connection status.
+- **Newsroom (F4):** Alpaca's live news WebSocket, symbol filters, original sources and pagination. Corrections update existing articles. REST backfills cover reconnects. Free-account authentication and all-news subscription were verified. No paid subscription is enabled.
 - **Filings (F8):** Direct free SEC EDGAR adapter. Every SEC form type is retained. Current and older issuer manifests are paginated, with original documents, filing indexes/exhibits, daily market-wide indexes and the public full-submissions dataset linked. This is on-demand EDGAR access, not a claim that the entire market archive has been downloaded.
 - **Typography:** Avenir 85 Heavy for headings/controls, installed locally by macOS. Bergoom for data, tables and chart labels, bundled with its SIL OFL license. Black, orange, blue, green and red terminal palette.
 

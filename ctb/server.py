@@ -81,6 +81,15 @@ def make_app(engine: Engine) -> web.Application:
     app = web.Application(middlewares=[dev_cors, same_origin_only])
     routes = web.RouteTableDef()
     research = None
+    manual = None
+
+    def manual_trading():
+        nonlocal manual
+        if s.venue != 'alpaca' or not engine.executor:
+            raise ValueError('Connect the Alpaca paper account first')
+        if manual is None or manual.ex is not engine.executor:
+            manual = engine.executor.manual
+        return manual
 
     def research_plugins():
         nonlocal research
@@ -99,6 +108,24 @@ def make_app(engine: Engine) -> web.Application:
             return j({"error": str(exc)}, 400)
         except Exception as exc:
             return j({"error": str(exc)}, 502)
+
+    @routes.post('/api/manual/preview')
+    async def manual_preview(req):
+        values = await req.json()
+        return await research_response(lambda: manual_trading().preview(values))
+
+    @routes.get('/api/manual/orders')
+    async def manual_orders(_):
+        return await research_response(lambda: manual_trading().orders())
+
+    @routes.post('/api/manual/orders')
+    async def manual_send(req):
+        values = await req.json()
+        return await research_response(lambda: manual_trading().send(str(values.get('id', ''))))
+
+    @routes.post('/api/manual/orders/{id}/cancel')
+    async def manual_cancel(req):
+        return await research_response(lambda: manual_trading().cancel(req.match_info['id']))
 
     @routes.get("/api/research/plugins")
     async def plugins(_):
@@ -190,7 +217,9 @@ def make_app(engine: Engine) -> web.Application:
         preview = engine.latest_state.get(sym)
         return j({
             "symbol": sym, "tf": tf, "bars": bars, "ticker": st.ticker, "testnet_ticker": st.testnet_ticker,
-            "book": {"bids": st.bids[:15], "asks": st.asks[:15], "age_s": time.time() - st.book_ts if st.book_ts else None},
+            "book": {"bids": st.bids[:15], "asks": st.asks[:15], "source_ts": st.book_ts,
+                     "age_s": time.time() - st.book_ts if st.book_ts else None,
+                     **(engine.feed.book_info(sym) if s.venue == 'alpaca' and hasattr(engine, 'feed') else {})},
             "flow": {"5m": st.flow_window(5), "15m": st.flow_window(15), "60m": st.flow_window(60)},
             "liquidations": {"15m": st.liq_window(15), "60m": st.liq_window(60), "recent": list(st.liquidations)[-20:]},
             "oi_history": st.oi_history[-96:], "ls_ratio": st.ls_ratio[-48:], "funding_history": st.funding_history[-21:],
@@ -690,7 +719,8 @@ def make_app(engine: Engine) -> web.Application:
                         ticks[sym] = {"last": row[0], "mark": row[1], "bid": row[2], "ask": row[3], "testnet_last": row[4],
                                       "pct24h": 100 * float(t["price24hPcnt"]) if t.get("price24hPcnt") else None}
                 st = engine.store[watch["symbol"]]
-                book = (st.bids[:15], st.asks[:15])
+                info = engine.feed.book_info(watch['symbol']) if s.venue == 'alpaca' else {}
+                book = (st.bids[:15], st.asks[:15], st.book_ts, info)
                 bars = st.bars.get(watch["tf"]) or []
                 bar = bars[-1].as_dict() if bars else None
                 out: dict[str, Any] = {}
@@ -698,7 +728,8 @@ def make_app(engine: Engine) -> web.Application:
                     out["ticks"] = ticks
                 if last_sent.get("_book") != (watch["symbol"], book):
                     last_sent["_book"] = (watch["symbol"], book)
-                    out["book"] = {"symbol": watch["symbol"], "bids": book[0], "asks": book[1]}
+                    out["book"] = {"symbol": watch["symbol"], "bids": book[0], "asks": book[1],
+                                   "source_ts": book[2], **info}
                 if bar and last_sent.get("_bar") != (watch["symbol"], watch["tf"], bar):
                     last_sent["_bar"] = (watch["symbol"], watch["tf"], bar)
                     out["bar"] = {"symbol": watch["symbol"], "tf": watch["tf"], **bar}
