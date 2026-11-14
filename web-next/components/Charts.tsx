@@ -1,12 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import {
-  createChart, type IChartApi, type ISeriesApi, type SeriesMarker, type Time, type UTCTimestamp,
+  createChart, LineStyle, type IChartApi, type IPriceLine, type ISeriesApi, type SeriesMarker, type Time, type UTCTimestamp,
 } from "lightweight-charts";
 import { api as requestApi } from "@/lib/api";
 import { getState, setBarSink, useStore, type Bar } from "@/lib/store";
 import { cssVar, decimalsOf, fx, ud, usd } from "@/lib/format";
-import { chartMarkers, fillLoader } from "@/lib/chart-markers";
+import { chartMarkers, fillLoader, longEntryPrice } from "@/lib/chart-markers";
 
 type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number };
 
@@ -44,6 +44,8 @@ export function PriceChart() {
   const symbol = useStore((s) => s.symbol);
   const tf = useStore((s) => s.tf);
   const decisions = useStore((s) => s.decisions);
+  const positions = useStore((s) => s.ov?.account?.positions);
+  const entryLine = useRef<IPriceLine | null>(null);
   const [fillState, setFills] = useState<{symbol:string;rows:any[]}>({symbol:"",rows:[]});
   const tradeRev = useStore((s) => s.rev.trades);
   useEffect(() => {
@@ -73,6 +75,7 @@ export function PriceChart() {
       setBarSink(null);
       chart.remove();
       api.current = null;
+      entryLine.current = null;
     };
   }, []);
 
@@ -146,6 +149,21 @@ export function PriceChart() {
     const up = cssVar("--up"), dn = cssVar("--down");
     a.candles.setMarkers(chartMarkers(decisions, fillState.symbol === mkt.symbol ? fillState.rows : [], mkt.symbol, String(mkt.tf), new Set(byTime.current.keys()), up, dn) as SeriesMarker<Time>[]);
   }, [decisions, fillState, mkt]);
+
+  useEffect(() => {
+    const a = api.current;
+    if (!a) return;
+    const price = symbol && mkt?.symbol === symbol && mkt?.bars?.length ? longEntryPrice(positions, symbol) : null;
+    if (price === null) {
+      if (entryLine.current) a.candles.removePriceLine(entryLine.current);
+      entryLine.current = null;
+      return;
+    }
+    const options = { price, color: cssVar("--up"), lineWidth: 1 as const, lineStyle: LineStyle.Solid,
+      axisLabelVisible: true, title: "LONG ENTRY" };
+    if (entryLine.current) entryLine.current.applyOptions(options);
+    else entryLine.current = a.candles.createPriceLine(options);
+  }, [positions, symbol, mkt]);
 
   const chg = ohlc ? ohlc.close - ohlc.open : 0;
   return (

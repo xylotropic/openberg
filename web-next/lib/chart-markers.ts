@@ -20,7 +20,12 @@ export function fillLoader(load: (signal: AbortSignal) => Promise<any[]>, publis
   };
 }
 
-// Signals share a candle; confirmed fills remain separate and cannot be deduplicated away.
+export function longEntryPrice(positions: any[] | undefined, symbol: string): number | null {
+  const position = positions?.find(p => p.symbol === symbol && p.side === "long" && Number.isFinite(p.size) && p.size > 0);
+  return position && Number.isFinite(position.entry) && position.entry > 0 ? position.entry : null;
+}
+
+// LONG recommendations stay in the signal panel; charts show confirmed LONG fills.
 export function chartMarkers(decisions: any[], fills: any[], symbol: string, tf: string,
   times: Set<number>, up: string, down: string): PlotMarker[] {
   const seconds = ({ D: 86400, W: 604800 } as Record<string, number>)[tf] || Number(tf) * 60;
@@ -37,6 +42,7 @@ export function chartMarkers(decisions: any[], fills: any[], symbol: string, tf:
     if (d.symbol !== symbol || d.error_kind || d.probe || !Number.isFinite(d.ts)) continue;
     const action = String(d.action || "").toLowerCase();
     if (!["long", "short", "exit", "hold", "flat", "pending"].includes(action)) continue;
+    if (action === "long") continue;
     const time = bucket(d.ts);
     if (!times.has(time)) continue;
     const priority = ["long", "short", "exit"].includes(action) ? 2 : 0;
@@ -49,6 +55,7 @@ export function chartMarkers(decisions: any[], fills: any[], symbol: string, tf:
     } });
   }
   const events: PlotMarker[] = [];
+  const longFillTimes = new Set<number>();
   const seen = new Set<string>();
   for (const f of fills) {
     if (f.symbol !== symbol || !f.id || seen.has(f.id) || !Number.isFinite(f.at) || !(f.qty > 0) || !(f.price > 0)) continue;
@@ -56,9 +63,10 @@ export function chartMarkers(decisions: any[], fills: any[], symbol: string, tf:
     if (!times.has(time)) continue;
     seen.add(f.id);
     const long = f.position_side === "long", entry = f.effect === "entry";
+    if (entry && long) longFillTimes.add(time);
     events.push({ time, position: entry && !long || !entry && long ? "aboveBar" : "belowBar",
-      color: entry ? long ? up : down : "#43b5ff", shape: entry ? long ? "arrowUp" : "arrowDown" : "circle",
-      size: 1.8, text: entry ? `${long ? "LONG" : "SHORT"} FILL` : "EXIT FILL" });
+      color: entry ? long ? up : down : "#43b5ff", shape: entry && !long ? "arrowDown" : "circle",
+      size: entry && long ? 1 : 1.8, text: entry ? `${long ? "LONG" : "SHORT"} FILL` : "EXIT FILL" });
   }
-  return [...Array.from(signals.values(), s => s.marker), ...events].sort((a,b) => a.time-b.time);
+  return [...Array.from(signals.values(), s => s.marker).filter(m => !longFillTimes.has(m.time) || m.text !== ""), ...events].sort((a,b) => a.time-b.time);
 }
