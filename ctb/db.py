@@ -174,7 +174,7 @@ TRADE_COLUMNS = {
 
 JSON_COLS = {"state_json", "questions_json", "answers_json", "parsed_json", "issues_json", "usage_json",
              "model_meta_json", "decision_json", "label_json", "probs_json", "fills_json", "config_json",
-             "sizing_json", "events_json", "exit_links_json", "request_json", "review_json", "broker_json"}
+             "sizing_json", "events_json", "exit_links_json", "request_json", "response_json", "review_json", "broker_json"}
 
 
 class DB:

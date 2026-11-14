@@ -1,4 +1,4 @@
-"""Seven-stock strategy boundaries: time alignment, spend, and owned actions."""
+"""Session strategy boundaries: time alignment, spend, and owned actions."""
 import asyncio
 import json
 import time
@@ -9,7 +9,7 @@ import pytest
 from ctb.db import DB
 from ctb.kairos.client import RateBudget, KairosResult
 from ctb.market.store import MarketStore, Bar
-from ctb.scalper import CAP, RESERVE, PRICE, SYMBOLS, EQUITIES, CRYPTO, VERSION, Scalper, Spend, packet, questions
+from ctb.scalper import RESERVE, PRICE, SYMBOLS, EQUITIES, CRYPTO, VERSION, Scalper, Spend, packet, questions
 
 
 def history(symbol='TSLA', end=None):
@@ -23,9 +23,12 @@ def history(symbol='TSLA', end=None):
     return store,now
 
 
+CAP=2.0
+
+
 def budget(tmp_path, name='test.db'):
     db=DB(tmp_path/name);rate=RateBudget(200);rate.bind(db,'primary')
-    return Spend(db,rate)
+    return Spend(db,rate,monthly_cap=CAP)
 
 
 def result(tokens=6000, answers=None):
@@ -56,7 +59,7 @@ def test_packet_refuses_incomplete_or_invalid_inputs(fault):
     with pytest.raises(ValueError): packet(st,now)
 
 
-def test_all_seven_stocks_support_target_directions():
+def test_all_stocks_support_target_directions():
     q=questions(SYMBOLS)
     assert all(set(q[s]['criteria'])=={'LONG','SHORT','HOLD','EXIT'} for s in EQUITIES)
     assert all(set(q[s]['criteria'])=={'LONG','HOLD','EXIT'} for s in CRYPTO)
@@ -100,7 +103,7 @@ def test_budget_reservation_is_atomic_across_two_connections(tmp_path):
 
 def service(tmp_path):
     store,now=history(end=time.time())
-    for sym in SYMBOLS[1:]:
+    for sym in SYMBOLS:
         other,_=history(sym,now);store.state[sym]=other[sym]
     spend=budget(tmp_path);db=spend.db
     class Executor:
@@ -154,6 +157,7 @@ def test_old_bar_callbacks_make_no_legacy_model_calls_when_enabled(tmp_path):
     from ctb.runs import config_snapshot
     cfg=config_snapshot(s)
     assert cfg['qset']==VERSION and cfg['allocation_pct_per_position']==5 and cfg['horizon_minutes']==30
+    assert s.required_rph()==120
 
 
 def test_stale_quote_and_closed_spy_are_not_sent(tmp_path):
@@ -199,7 +203,11 @@ def test_session_flip_during_model_request_cannot_open_crypto(tmp_path):
             assert set(qs)==set(CRYPTO)
             strategy.e.feed.clock={'is_open':True,'next_close':'2099-01-01T00:00:00Z'}
             return result(6000,{s:{'type':'choice','choice':'LONG','probabilities':{'LONG':.99,'HOLD':.005,'EXIT':.005}} for s in qs})
-    strategy.client=Client();asyncio.run(strategy.tick())
+    strategy.client=Client()
+    async def run():
+        await strategy.tick()
+        await asyncio.gather(*strategy.executions.values())
+    asyncio.run(run())
     assert not strategy.e.executor.opened
     assert all(d['action']=='hold' for d in strategy.db.query('SELECT action FROM decisions'))
 
@@ -208,7 +216,11 @@ def test_session_exit_runs_when_model_and_entries_are_off(tmp_path):
     strategy,_=service(tmp_path);owned(strategy,'BTC/USD')
     strategy.e.s.trading_enabled=False
     class Client: configured=False
-    strategy.client=Client();asyncio.run(strategy.tick())
+    strategy.client=Client()
+    async def run():
+        await strategy.tick()
+        await asyncio.gather(*strategy.executions.values())
+    asyncio.run(run())
     assert strategy.e.executor.closed==[('BTC/USD','session_switch')]
     assert strategy.db.one('SELECT COUNT(*) n FROM scalper_calls')['n']==0
 
@@ -217,3 +229,96 @@ def test_exit_also_cancels_an_owned_opening_trade(tmp_path):
     strategy,now=service(tmp_path);owned(strategy,'TSLA',status='opening')
     asyncio.run(strategy.apply('TSLA','EXIT',.9,strategy.build(now),result(6000,{'TSLA':{}}),'test'))
     assert strategy.e.executor.closed==[('TSLA','drex_exit')]
+
+
+def test_requested_cadence_and_restart_reservations(tmp_path,monkeypatch):
+    strategy,now=service(tmp_path);sent=[];observed=[];clock=[now]
+    monkeypatch.setattr('ctb.scalper.time.time',lambda:clock[0])
+    class Client:
+        configured=True
+        async def ask(self,state,qs):
+            sent.append((clock[0],set(qs)))
+            return result(5000,{s:{'type':'choice','choice':'HOLD','probabilities':{k:1.0 if k=='HOLD' else 0.0 for k in qs[s]['criteria']}} for s in qs})
+    strategy.client=Client()
+    strategy.build=lambda now:{'as_of':now,'symbols':{s:{} for s in (EQUITIES if strategy.e.feed.clock['is_open'] else CRYPTO)}}
+    async def apply(s,*_,**__): observed.append(s)
+    strategy.apply=apply
+    async def run():
+        await strategy.tick();await asyncio.sleep(0)
+        assert sent[-1][1]==set(EQUITIES)
+        clock[0]=now+29;await strategy.tick();assert len(sent)==1
+        clock[0]=now+30;await strategy.tick();assert sent[-1][1]=={'SPY'}
+        restarted=Scalper(strategy.e);restarted.restore_schedule()
+        assert restarted.last_sent['SPY']==now+30 and restarted.last_sent['TSLA']==now
+        clock[0]=now+600;await strategy.tick();assert sent[-1][1]==set(EQUITIES)
+        strategy.e.feed.clock={'is_open':False}
+        clock[0]=now+630;await strategy.tick();assert sent[-1][1]==set(CRYPTO)
+        clock[0]=now+660;await strategy.tick();assert sent[-1][1]==set(CRYPTO)
+        await strategy.stop()
+    asyncio.run(run())
+
+
+def test_slow_execution_does_not_block_model_and_is_bounded_per_symbol(tmp_path,monkeypatch):
+    strategy,now=service(tmp_path);clock=[now];entered=[]
+    monkeypatch.setattr('ctb.scalper.time.time',lambda:clock[0])
+    class Client:
+        configured=True
+        async def ask(self,state,qs): return result(5000,{'SPY':{'type':'choice','choice':'HOLD','probabilities':{'LONG':0,'SHORT':0,'HOLD':1,'EXIT':0}}})
+    strategy.client=Client();strategy.build=lambda now:{'as_of':now,'symbols':{'SPY':{}}}
+    async def run():
+        gate=asyncio.Event()
+        async def apply(symbol,*_,entry_busy=False):
+            entered.append(entry_busy)
+            if not entry_busy: await gate.wait()
+        strategy.apply=apply
+        await strategy.tick();await asyncio.sleep(0)
+        clock[0]+=30
+        await asyncio.wait_for(strategy.tick(),1);await asyncio.sleep(0)
+        assert entered==[False,True]
+        assert strategy.db.one('SELECT COUNT(*) n FROM scalper_calls')['n']==2
+        await strategy.stop()
+        assert strategy.executions['SPY'].cancelled()
+    asyncio.run(run())
+
+
+def test_prepaid_mode_removes_monthly_cap_and_billing_failure_survives_restart(tmp_path,monkeypatch):
+    from ctb.kairos.client import KairosError
+    strategy,now=service(tmp_path);strategy.e.feed.clock={'is_open':False};clock=[now];calls=[]
+    monkeypatch.setattr('ctb.scalper.time.time',lambda:clock[0])
+    strategy.db.conn.execute('INSERT INTO scalper_calls(id,version,started_at,request_json,state,reserved_usd) VALUES(?,?,?,?,?,?)',['old',VERSION,now-3600,'{}','complete',10])
+    assert strategy.spend.monthly_cap is None
+    class Client:
+        configured=True
+        async def ask(self,*_): calls.append(1);raise KairosError('billing','insufficient_credit',402)
+    strategy.client=Client()
+    strategy.build=lambda now:{'as_of':now,'symbols':{'BTC/USD':{}}}
+    async def run():
+        with pytest.raises(ValueError,match='insufficient_credit'): await strategy.tick()
+        clock[0]+=30
+        await strategy.tick()
+        reopened=Scalper(strategy.e)
+        assert reopened.state('credit_blocked') and len(calls)==1
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('status',[401,402,403,429])
+def test_primary_fallback_honors_all_durable_credential_restrictions(tmp_path,monkeypatch,status):
+    from ctb.kairos.client import KairosError
+    strategy,now=service(tmp_path);clock=[now];calls=[]
+    monkeypatch.setattr('ctb.scalper.time.time',lambda:clock[0])
+    class Client:
+        configured=True
+        async def ask(self,*_): calls.append(1);raise KairosError('unavailable','blocked',status)
+    strategy.client=Client();strategy.build=lambda now:{'as_of':now,'symbols':{'SPY':{}}}
+    async def run():
+        with pytest.raises(ValueError): await strategy.tick()
+        clock[0]+=30;await strategy.tick();assert len(calls)==1
+        reopened=Scalper(strategy.e);reopened.client=Client();reopened.build=strategy.build
+        clock[0]+=30;await reopened.tick();assert len(calls)==1
+        clock[0]=now+301
+        if status==429:
+            with pytest.raises(ValueError): await reopened.tick()
+            assert len(calls)==2
+        else:
+            await reopened.tick();assert len(calls)==1
+    asyncio.run(run())

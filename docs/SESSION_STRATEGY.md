@@ -2,8 +2,8 @@
 
 Openberg scans every 30 seconds. The Alpaca clock selects the entry universe:
 
-- US regular session: TSLA, AAPL, GOOGL, MSFT, NVDA, AMD and INTC shares.
-- Closed session: BTC/USD, ETH/USD and SOL/USD spot.
+- US regular session: SPY every 30 seconds; TSLA, AAPL, GOOGL, MSFT, NVDA, AMD and INTC shares every 10 minutes.
+- Closed session: BTC/USD, ETH/USD and SOL/USD spot every 30 seconds.
 
 Stock targets are LONG, SHORT, HOLD and EXIT. Crypto targets are LONG, HOLD and EXIT because Alpaca spot does not support opening shorts. Shorts require current shortable and easy-to-borrow flags. The broker clock handles holidays and early closes. New entries stop 35 minutes before the next session boundary. The service closes its positions from the previous universe and waits for reconciliation before opening positions in the new universe. Manual and external positions retain their ownership.
 
@@ -21,11 +21,11 @@ A packet also includes the executable quote, spread, observed timestamp, strateg
 
 The application reserves the maximum possible Finance request charge before each send: 262,144 input tokens at $0.03 per million. Reservations and usage survive restarts in SQLite. Valid reported input usage releases the unused reserve; failed or ambiguous requests keep their reservation. Requests have no automatic retries. The monthly ledger includes the prior economic-link experiment's expenditure and the separately labeled engineering probe. It does not represent all spending by other applications on the same Nace account.
 
-The shared experiment ceiling is $2 per UTC calendar month at this frozen published input-token price. The service also retains the shared hourly request limit. It stops sending when the remaining budget cannot cover another full reservation. Risk-reducing orders do not depend on Drex or on model budget.
+The former $2 monthly ceiling is removed for this strategy. The shared hourly request limit remains. Each symbol's last reservation determines its next due time, including across restarts. Due symbols share one batch; missed intervals do not cause catch-up bursts. Data readiness, paused entries, session transitions and request failures can skip an interval. Broker execution runs separately so a pending maker order does not delay the next model request. Queued entries still expire after 25 seconds and cannot pyramid.
 
-Measured November 14: one historical seven-stock schema test used 20,944 input tokens, cost $0.00062832, and returned all seven HOLD answers in 872 ms. It submitted no broker orders. This proves connectivity, schema handling and measured cost only. The probe is excluded from trading decisions and performance labels.
+Set `NACE_ACCOUNTS_FILE` to an owner-only JSON file outside the repository. Its `accounts` array contains unique aliases (`id`), full `api_key` values and `prepaid_only: true`, after verifying that paid usage is off in each account's billing settings. Openberg rotates batches across these accounts. It stores only the alias in each call record; keys never enter SQLite, API responses or the frontend. Without this file, it uses the existing `NACE_API_KEY`.
 
-At that size, 30-second stock-session calls over 21 full sessions would cost about $10.29 before overnight crypto. Consequently **30 seconds is the local scan interval, not an unconditional model-call interval**. The service adjusts the batch interval using recent cost per symbol, a conservative allowance for 23 stock sessions, remaining off-session hours and a 15% buffer. The hard reservation ledger remains authoritative if estimates are wrong. The strategy workspace displays the current pace and next call.
+HTTP 402 blocks an account persistently across restarts; 401/403 also disable the credential. A 429 pauses that credential for five minutes. There is no immediate retry with a different account. Calls stop when no eligible credential remains. Openberg does not enable paid usage, top up balances, or guarantee that a previously verified provider billing setting cannot change externally. Risk-reducing orders do not depend on Drex availability. The local usage ledger does not measure spending by other applications or credit expiration.
 
 ## Orders and risk
 
@@ -33,7 +33,7 @@ LONG and SHORT are target directions. Repeated signals never pyramid. HOLD prese
 
 Each new position targets 5% of current paper-account equity, rounded down to the permitted asset quantity. This is capital allocation, not a planned 5% portfolio loss at the stop. Fresh buying power and existing aggregate risk limits can reduce the size. The coordinator rechecks the 5% limit against current account equity immediately before dispatch. Stops use the greater of 1.5 times one-minute ATR or 20 basis points for stocks and 100 basis points for crypto. Targets are twice the stop distance. The time exit is 30 minutes. Existing account limits, kill controls, leverage limits and exclusive resource leases still apply. Stops and time exits are checked by the existing five-second execution worker, with broker stop-limit backstops. These are triggers and sizing limits, not guaranteed loss ceilings or guaranteed fills.
 
-The new version uses exact version-linked decision records and the existing paper executor/coordinator. It preserves durable client order IDs, ownership reconciliation, unknown-response recovery and cross-owner reservations. It rechecks signal age, candle cutoff, quote age, session and allocation caps before dispatch. The old per-symbol model path and economic-link entries/classifications are disabled while this version is active; their records and exit obligations remain.
+The new version uses exact version-linked decision records and the existing paper executor/coordinator. It preserves durable client order IDs, ownership reconciliation, unknown-response recovery and cross-owner reservations. It rechecks signal age, candle cutoff, quote age, session and allocation caps before dispatch. A terminal preflight rejection can release an entry only when the canonical attempt marker is null. Lookup failures after an attempted submission retain ownership and never authorize another POST. The old per-symbol model path and economic-link entries/classifications are disabled while this version is active; their records and exit obligations remain.
 
 The 0.60 action-weight gate is a provisional execution filter. A choice weight is not a calibrated probability of profit. Crypto cost estimates include 50 basis points of round-trip fee allowance plus the observed spread; stock shadow outcomes use the observed spread plus two basis points. Actual fills and fees can differ. Broker equity history includes the whole pinned paper account, including manual activity and cash movements. It is not a strategy-only return curve.
 

@@ -96,7 +96,7 @@ Automatic trading starts **off**. The active Alpaca adapter uses native stop-lim
 
 ### Economic-link paper experiment
 
-With `CTB_SCALPER_ENABLED=1`, the [session strategy](docs/SESSION_STRATEGY.md) replaces legacy model calls and economic-link entries/classifications. It scans TSLA, AAPL, GOOGL, MSFT, NVDA, AMD and INTC in the regular US session, then BTC/USD, ETH/USD and SOL/USD outside it. Full Drex packets are paced within a shared $2/month experiment ceiling; local scans run every 30 seconds. Crypto is long-only. Existing exit obligations and manual access remain active. Inspect **F12 STRATEGY** for current limits and readiness.
+With `CTB_SCALPER_ENABLED=1`, the [session strategy](docs/SESSION_STRATEGY.md) replaces legacy model calls and economic-link entries/classifications. It requests SPY decisions every 30 seconds and TSLA, AAPL, GOOGL, MSFT, NVDA, AMD and INTC every 10 minutes in the regular US session. Outside it, BTC/USD, ETH/USD and SOL/USD run every 30 seconds. Requests rotate across configured prepaid Drex accounts. Billing failures disable the affected credential; the shared hourly request limit remains. The former $2 monthly limit no longer applies to this strategy. Crypto is long-only. Existing exit obligations and manual access remain active. Inspect **F12 STRATEGY** for current limits and readiness.
 
 The **F11 / ALPHA** screen runs a separate, versioned experiment. It tests sustained customer-demand changes against previously documented supplier relationships. This experiment has its own persisted arm/pause switch. It does not use the intraday AUTO-TRADE switch.
 

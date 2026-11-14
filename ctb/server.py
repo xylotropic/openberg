@@ -735,8 +735,8 @@ def make_app(engine: Engine) -> web.Application:
         every feed, stream, store and instrument filter is rebuilt for the new list."""
         body = await req.json()
         syms = [str(x).strip().upper() for x in body.get("symbols") or []]
-        if s.scalper_enabled and set(syms)!= {'TSLA','AAPL','GOOGL','MSFT','NVDA','AMD','INTC','BTC/USD','ETH/USD','SOL/USD'}:
-            return j({'error':'The active session strategy uses seven equities plus BTC/USD, ETH/USD and SOL/USD. Add other symbols to the watchlist.'},409)
+        if s.scalper_enabled and set(syms)!= {'SPY','TSLA','AAPL','GOOGL','MSFT','NVDA','AMD','INTC','BTC/USD','ETH/USD','SOL/USD'}:
+            return j({'error':'The active session strategy uses SPY, seven equities, BTC/USD, ETH/USD and SOL/USD. Add other symbols to the watchlist.'},409)
         if s.venue == "alpaca":
             errs = []
             if not syms or len(syms) > 30 or len(set(syms)) != len(syms):
@@ -758,6 +758,7 @@ def make_app(engine: Engine) -> web.Application:
             return j({"error": f"{', '.join(dropped)} still has an open bot trade; close it (or wait for its exit) before removing it"}, 409)
         minutes = s.decision_tf_minutes
         need = int(round(len(syms) * (60 / minutes) * ((2 if s.symmetrize else 1) + 3 * engine.probe_rate)))
+        if s.scalper_enabled: need=s.required_rph()
         updates = {"CTB_SYMBOLS": ",".join(syms)}
         if need > s.kairos_max_requests_per_hour:
             if not body.get("raise_budget"):

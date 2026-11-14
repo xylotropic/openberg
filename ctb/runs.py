@@ -18,12 +18,13 @@ def config_snapshot(s: Settings) -> dict[str, Any]:
     from .kairos.questions import QUESTION_SET_VERSION
 
     if s.scalper_enabled:
-        from .scalper import VERSION,EQUITIES,CRYPTO,MODEL
+        from .scalper import VERSION,EQUITIES,CRYPTO,MODEL,CADENCE,cadence,SYMBOLS
         return {'venue':s.venue,'model_provider':'drex','model_id':MODEL,'symbols':s.symbols,
             'decision_tf':'30s','horizon_minutes':30,'qset':VERSION,'exploration_mode':False,'exit_mode':'managed',
             'allocation_pct_per_position':5,'max_positions':s.max_positions,
-            'strategy':{'bracket_mode':'atr','entry_mode':s.entry_mode,'symmetrize':False,'trade_trigger':'budgeted_scan',
-                'stock_session':EQUITIES,'closed_session':CRYPTO,'monthly_model_usd':2,'allocation_pct':5}}
+            'strategy':{'bracket_mode':'atr','entry_mode':s.entry_mode,'symmetrize':False,'trade_trigger':'scheduled_scan',
+                'cadence':CADENCE,'cadence_seconds':{symbol:cadence(symbol) for symbol in SYMBOLS},
+                'stock_session':EQUITIES,'closed_session':CRYPTO,'monthly_model_usd':None,'billing_mode':'prepaid','allocation_pct':5}}
 
     return {
         "venue": s.venue,

@@ -238,6 +238,7 @@ class Settings:
 
     def required_rph(self, tf: str | None = None, probe_rate: float = 0.05) -> int:
         """Kairos requests/hour a trading timeframe needs: one per closed bar per symbol, plus probes."""
+        if self.scalper_enabled: return 120  # One due-symbol batch per 30-second scan.
         minutes = int(tf or self.decision_tf)
         per_decision = 2 if self.symmetrize else 1  # real + mirrored market
         return int(round(len(self.symbols) * (60 / minutes) * (per_decision + 3 * probe_rate)))

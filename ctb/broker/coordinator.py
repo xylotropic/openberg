@@ -329,6 +329,10 @@ class BrokerCoordinator:
         for trade in self.db.query("SELECT * FROM trades WHERE venue='alpaca' AND account_id=? AND status IN ('opening','open','closing')", [self.account_id]):
             links = [trade['entry_link_id'], *(trade.get('exit_links_json') or []), trade.get('exit_link_id'), trade['entry_link_id'] + '-stop']
             for link in dict.fromkeys(l for l in links if l):
+                # Existing canonical records already contain the atomic submission
+                # proof. Never turn a rejected preflight into an attempted order.
+                if self.one('SELECT id FROM execution_intents WHERE account_id=? AND client_order_id=?', [self.account_id,link]):
+                    continue
                 try:
                     order = await self._transport.order(link)
                 except AlpacaError as exc:
@@ -406,7 +410,7 @@ class BrokerCoordinator:
             if dispatch and not intent['attempted_at'] and intent['effect']=='increase' and row.get('mode')=='candle':
                 decision=self.db.one('SELECT * FROM decisions WHERE id=?',[row['decision_id']])
                 dj=(decision or {}).get('decision_json') or {}
-                if (not self.s.scalper_enabled or row['symbol'] not in ('TSLA','AAPL','GOOGL','MSFT','NVDA','AMD','INTC','BTC/USD','ETH/USD','SOL/USD') or row['symbol'] not in self.s.symbols
+                if (not self.s.scalper_enabled or row['symbol'] not in ('SPY','TSLA','AAPL','GOOGL','MSFT','NVDA','AMD','INTC','BTC/USD','ETH/USD','SOL/USD') or row['symbol'] not in self.s.symbols
                         or not decision or decision['qset_version']!='candles-session-v1'
                         or time.time()-dj.get('signal_at',0)>25 or time.time()-dj.get('execution_quote_at',0)>5):
                     raise ValueError('Session entry authorization expired or is disabled')

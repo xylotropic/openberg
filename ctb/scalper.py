@@ -1,4 +1,4 @@
-"""Session-switched paper strategy. Closed candles, bounded spend, shared execution."""
+"""Session-switched paper strategy. Closed candles, prepaid Drex, shared execution."""
 from __future__ import annotations
 
 import asyncio
@@ -13,16 +13,21 @@ from . import indicators as ind
 from .alpha.classifier import choice
 from .broker.alpaca import timestamp
 from .kairos.client import SystemOneClient
+from .kairos.accounts import AccountPool
 from .models import MODELS
 
 VERSION = 'candles-session-v1'
-EQUITIES = ['TSLA', 'AAPL', 'GOOGL', 'MSFT', 'NVDA', 'AMD', 'INTC']
+EQUITIES = ['SPY', 'TSLA', 'AAPL', 'GOOGL', 'MSFT', 'NVDA', 'AMD', 'INTC']
 CRYPTO = ['BTC/USD','ETH/USD','SOL/USD']
 SYMBOLS = [*EQUITIES,*CRYPTO]
 MODEL = 'drex-max-finance'
 PRICE = .03 / 1_000_000
 RESERVE = 262144 * PRICE
-CAP = 2.0
+CADENCE = 'prepaid-30s-600s-v1'
+
+
+def cadence(symbol):
+    return 30 if symbol == 'SPY' or symbol in CRYPTO else 600
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS scalper_calls (
  id TEXT PRIMARY KEY, version TEXT NOT NULL, started_at REAL NOT NULL,
@@ -101,9 +106,12 @@ def questions(symbols):
 
 class Spend:
     """Reserve worst-case cost atomically. Failed/unknown calls keep the reservation."""
-    def __init__(self, db, hourly):
-        self.db, self.hourly = db, hourly
-        with db.lock: db.conn.executescript(SCHEMA)
+    def __init__(self, db, hourly, monthly_cap=None):
+        self.db, self.hourly, self.monthly_cap = db, hourly, monthly_cap
+        with db.lock:
+            db.conn.executescript(SCHEMA)
+            if 'credential_id' not in {r[1] for r in db.conn.execute('PRAGMA table_info(scalper_calls)')}:
+                db.conn.execute('ALTER TABLE scalper_calls ADD COLUMN credential_id TEXT')
 
     def bounds(self, now):
         d = datetime.fromtimestamp(now, timezone.utc)
@@ -114,22 +122,23 @@ class Spend:
     def spent(self, now=None):
         start,_ = self.bounds(now or time.time())
         own = self.db.one('SELECT COALESCE(SUM(COALESCE(actual_usd,reserved_usd)),0) n FROM scalper_calls WHERE started_at>=?',[start])['n']
-        # The retired experiment shares the user's ceiling; its history stays intact.
+        # Keep prior experiment spending visible without imposing its retired cap.
         alpha = 0
         if self.db.one("SELECT name FROM sqlite_master WHERE name='alpha_classifications'"):
             alpha = self.db.one('SELECT COALESCE(SUM(COALESCE(actual_usd,reserved_usd)),0) n FROM alpha_classifications WHERE started_at>=?',[start])['n']
         return float(own + alpha)
 
-    def reserve(self, state, qs, now=None):
+    def reserve(self, state, qs, now=None, credential_id='primary'):
         now = now or time.time(); identity = uuid.uuid4().hex
         payload = json.dumps({'model':MODEL,'state':state,'questions':qs},separators=(',',':'),allow_nan=False)
         with self.db.lock:
             self.db.conn.execute('BEGIN IMMEDIATE')
             try:
-                if self.spent(now) + RESERVE > CAP + 1e-12: raise ValueError('Monthly Drex budget exhausted')
+                if self.monthly_cap is not None and self.spent(now) + RESERVE > self.monthly_cap + 1e-12:
+                    raise ValueError('Monthly Drex budget exhausted')
                 if not self.hourly.try_take(): raise ValueError('Hourly model budget exhausted')
-                self.db.conn.execute('INSERT INTO scalper_calls(id,version,started_at,request_json,state,reserved_usd) VALUES(?,?,?,?,?,?)',
-                    [identity,VERSION,now,payload,'reserved',RESERVE])
+                self.db.conn.execute('INSERT INTO scalper_calls(id,version,started_at,request_json,state,reserved_usd,credential_id) VALUES(?,?,?,?,?,?,?)',
+                    [identity,VERSION,now,payload,'reserved',RESERVE,credential_id])
                 self.db.conn.execute('COMMIT')
             except BaseException:
                 self.db.conn.execute('ROLLBACK'); raise
@@ -143,13 +152,7 @@ class Spend:
                 [json.dumps(result.raw,allow_nan=False),'complete',actual,tokens if actual is not None else None,time.time(),identity])
 
     def interval(self, now=None):
-        now=now or time.time();start,end=self.bounds(now)
-        rows=self.db.query('SELECT request_json,actual_usd,reserved_usd FROM scalper_calls ORDER BY started_at DESC LIMIT 20')
-        cost=max((float(r['actual_usd'] if r['actual_usd'] is not None else r['reserved_usd'])/max(1,len(r['request_json'].get('state',{}).get('symbols',{}))) for r in rows),default=.0001)
-        # Pace a full month, even when the service is enabled part-way through it.
-        rth=23*6.5*3600
-        ticker_seconds=7*rth+3*max(0,end-start-rth)
-        return max(30, math.ceil(cost * ticker_seconds / CAP * 1.15 / 30)*30)
+        return 30
 
 
 class Scalper:
@@ -158,6 +161,8 @@ class Scalper:
         self.spend=Spend(engine.db,engine.budget)
         self.client=SystemOneClient(MODELS['drex'],engine.session,model=MODEL,timeout_s=25,max_retries=0)
         self.lock=asyncio.Lock(); self.next_call=0; self.last_scan=0; self.last_error=None; self.readiness={}; self.task=None
+        self.last_sent={}; self.executions={}; self.observations=set()
+        self.pool=AccountPool(self.db,engine.session,MODEL)
 
     def state(self,key,value=None,write=False):
         if write:
@@ -168,16 +173,46 @@ class Scalper:
     async def start(self):
         if self.client.url!='https://console.nace.ai/v1/systemone':
             raise ValueError('Session strategy requires the verified Nace endpoint')
-        if self.e.run['config_json'].get('qset')!=VERSION:
+        cfg=self.e.run['config_json']
+        if cfg.get('qset')!=VERSION or cfg.get('strategy',{}).get('cadence')!=CADENCE:
             from .runs import start
             self.e.run=start(self.db,self.e.s,name='Session strategy · stocks / crypto · 5% allocation')
-        row=self.db.one('SELECT started_at FROM scalper_calls ORDER BY started_at DESC LIMIT 1')
-        self.next_call=(row['started_at']+self.spend.interval()) if row else 0
+        self.restore_schedule()
         self.task=asyncio.create_task(self.loop(),name='session_strategy')
+
+    def restore_schedule(self):
+        # Reservations count even if a request failed or the process stopped.
+        for row in self.db.query('SELECT started_at,request_json FROM scalper_calls WHERE version=? ORDER BY started_at DESC LIMIT 1000',[VERSION]):
+            for symbol in row['request_json'].get('state',{}).get('symbols',{}):
+                self.last_sent.setdefault(symbol,row['started_at'])
+        self.update_next()
 
     async def stop(self):
         if self.task:
             self.task.cancel(); await asyncio.gather(self.task,return_exceptions=True)
+        pending=[*self.executions.values(),*self.observations]
+        for task in pending: task.cancel()
+        await asyncio.gather(*pending,return_exceptions=True)
+
+    def update_next(self):
+        active=EQUITIES if self.e.feed.clock.get('is_open') else CRYPTO
+        self.next_call=min((self.last_sent.get(s,0)+cadence(s) for s in active),default=0)
+
+    def queue_action(self,symbol,*args):
+        previous=self.executions.get(symbol)
+        busy=bool(previous and not previous.done())
+        task=asyncio.create_task(self.apply(symbol,*args,entry_busy=busy),name='strategy_'+symbol)
+        # Busy observations record recommendations but cannot queue another entry.
+        if not busy: self.executions[symbol]=task
+        else: self.observations.add(task);task.add_done_callback(self.observations.discard)
+        task.add_done_callback(self.execution_done)
+
+    def execution_done(self,task):
+        if task.cancelled(): return
+        exc=task.exception()
+        if exc:
+            self.last_error=self.pool.redact(str(exc))[:300]
+            self.e.emit('event',self.db.event('warn','scalper_execution',self.last_error))
 
     def owned(self,symbol):
         return self.db.query("SELECT t.* FROM trades t JOIN decisions d ON d.id=t.decision_id WHERE t.venue='alpaca' AND t.account_id=? AND t.symbol=? AND t.status IN ('opening','open','closing') AND d.qset_version=?",[self.e.s.alpaca_account_id,symbol,VERSION])
@@ -235,41 +270,62 @@ class Scalper:
                     if len(owned)==1:
                         await self.e.executor.close(symbol,'session_switch',expected_trade_id=owned[0]['id'])
             state=self.build(now)
-            if transitioning or not state['symbols'] or not self.e.s.trading_enabled or not self.client.configured or self.state('model_blocked') or now<self.next_call: return
-            # A single batch replaces the old per-symbol/mirrored calls.
-            qs=questions(state['symbols']);planned_interval=self.spend.interval(now)
-            identity=self.spend.reserve(state,qs)
-            self.next_call=now+planned_interval
+            self.update_next()
+            if transitioning or not state['symbols'] or not self.e.s.trading_enabled or self.state('model_blocked'): return
+            state['symbols']={s:p for s,p in state['symbols'].items() if now>=self.last_sent.get(s,0)+cadence(s)}
+            if not state['symbols']: return
+            selected=self.pool.choose(now)
+            client,credential_id=selected if selected else (self.client,'primary')
+            if (self.pool.configured and selected is None) or (not self.pool.configured and (self.state('credit_blocked') or not self.pool.available('primary',now))) or not client.configured:
+                return
+            # One due-symbol batch; no catch-up bursts or duplicated model votes.
+            qs=questions(state['symbols'])
+            identity=self.spend.reserve(state,qs,now=now,credential_id=credential_id)
+            self.last_sent.update({s:now for s in qs}); self.update_next()
             try:
-                result=await self.client.ask(state,qs)
+                result=await client.ask(state,qs)
                 if result.metadata.get('model')!=MODEL:
                     self.state('model_blocked',{'at':time.time(),'reason':'Unexpected responding model'},write=True)
                     raise ValueError('Unexpected responding model; further calls blocked')
                 self.spend.settle(identity,result)
-                self.next_call=now+self.spend.interval(now)
                 actions={s:choice(result.answers,s,qs[s]['criteria']) for s in qs}
                 if time.time()-now>25: raise ValueError('Drex decision expired before execution')
                 self.last_error=None
                 for symbol,(action,probability) in actions.items():
-                    await self.apply(symbol,action,probability,state,result,identity)
+                    self.queue_action(symbol,action,probability,state,result,identity)
             except Exception as exc:
+                # Billing/auth failures disable this credential durably. Rate limits
+                # cool it down, never trigger an immediate retry through another key.
+                self.pool.failed(credential_id,exc,now)
+                if not self.pool.configured and getattr(exc,'status',None)==402:
+                    self.state('credit_blocked',{'at':now,'reason':'Drex prepaid credit unavailable'},write=True)
                 with self.db.lock:
-                    message=str(exc).replace(MODELS['drex'].api_key,'[redacted]') if MODELS['drex'].api_key else str(exc)
+                    message=self.pool.redact(str(exc))
                     self.db.conn.execute("UPDATE scalper_calls SET state='failed',error=?,completed_at=? WHERE id=?",[message[:300],time.time(),identity])
                 raise ValueError(message[:300]) from None
 
-    async def apply(self,symbol,action,probability,state,result,identity):
+    async def apply(self,symbol,action,probability,state,result,identity,*,entry_busy=False):
         now=time.time(); data=state['symbols'][symbol]; features=data['indicators']; owned=self.owned(symbol)
         sl=max(100 if symbol in CRYPTO else 20,features['atr14']/data['closed_1m'][-1][4]*10000*1.5)
         tp=sl*2;reason='Drex target '+action;actual='hold';ex=self.e.executor;execution=None
         if now-state['as_of']>25:
             reason='Drex signal expired; local exits remain active'
         elif owned and owned[0]['status'] in ('open','opening') and (action=='EXIT' or action in ('LONG','SHORT') and action.lower()!=owned[0]['side']):
-            flat=await ex.close(symbol,'drex_exit' if action=='EXIT' else 'drex_opposite',expected_trade_id=owned[0]['id']);actual='exit'
-            execution={'close_requested':True,'confirmed_flat':bool(flat)}
+            try:
+                close_reason='drex_exit' if action=='EXIT' else 'drex_opposite'
+                if entry_busy:
+                    self.db.update('trades',owned[0]['id'],{'close_reason':close_reason})
+                    flat=False
+                else:
+                    flat=await ex.close(symbol,close_reason,expected_trade_id=owned[0]['id'])
+                actual='exit'
+                execution={'close_requested':True,'confirmed_flat':bool(flat)}
+            except Exception as exc:
+                reason=self.pool.redact(str(exc));execution={'ok':False,'reason':reason}
         elif not owned and action in ('LONG','SHORT'):
             try:
                 if not self.e.s.trading_enabled: raise ValueError('Entries paused')
+                if entry_busy: raise ValueError('Previous action is still executing; no queued entry')
                 if symbol not in SYMBOLS or symbol not in self.e.s.symbols: raise ValueError('Symbol outside active universe')
                 if symbol in CRYPTO and action=='SHORT': raise ValueError('Alpaca spot crypto cannot open shorts')
                 if time.time()-state['as_of']>25: raise ValueError('Drex signal expired')
@@ -296,8 +352,11 @@ class Scalper:
             'answers_json':{symbol:result.answers[symbol]},'decision_json':decision,'action':actual,'price':data['closed_1m'][-1][4],
             'sl_bp':sl,'tp_bp':tp,'horizon_min':30,'latency_ms':result.latency_ms})
         if actual in ('long','short'):
-            response=await ex.open(symbol=symbol,side=actual,sl_bp=sl,tp_bp=tp,decision_id=did,ev_r=0,
-                decision_price=data['closed_1m'][-1][4],horizon_min=30,events=['session_candles'])
+            try:
+                response=await ex.open(symbol=symbol,side=actual,sl_bp=sl,tp_bp=tp,decision_id=did,ev_r=0,
+                    decision_price=data['closed_1m'][-1][4],horizon_min=30,events=['session_candles'])
+            except Exception as exc:
+                response={'ok':False,'reason':self.pool.redact(str(exc))[:300]}
             decision=self.db.one('SELECT decision_json FROM decisions WHERE id=?',[did])['decision_json']
             decision['execution']=response
             if not response.get('ok'):
@@ -307,11 +366,14 @@ class Scalper:
         self.e.emit('decision',self.e._decision_view(self.db.one('SELECT * FROM decisions WHERE id=?',[did])))
 
     def status(self):
+        self.update_next()
         return {'version':VERSION,'symbols':SYMBOLS,'paper':True,'enabled':self.e.s.trading_enabled,
             'active_symbols':EQUITIES if self.e.feed.clock.get('is_open') else CRYPTO,
             'session':'US STOCKS' if self.e.feed.clock.get('is_open') else 'CRYPTO',
             'scan_seconds':30,'drex_interval_seconds':self.spend.interval(),'next_call_at':self.next_call,'last_scan_at':self.last_scan,
-            'monthly_cap_usd':CAP,'month_spent_usd':self.spend.spent(),'error':self.last_error,'readiness':self.readiness,
+            'cadence_seconds':{s:cadence(s) for s in SYMBOLS},'credit_blocked':self.state('credit_blocked'),
+            'monthly_cap_usd':None,'billing_mode':'prepaid','accounts':self.pool.status(),
+            'month_spent_usd':self.spend.spent(),'error':self.last_error,'readiness':self.readiness,
             'risk':{'allocation_pct_per_position':5,'max_holding_minutes':30,'entry_cooldown_minutes':5},
             'decisions':self.db.query('SELECT id,ts,symbol,action,decision_json,latency_ms FROM decisions WHERE qset_version=? ORDER BY id DESC LIMIT 30',[VERSION]),
-            'last_call':self.db.one('SELECT id,started_at,state,input_tokens,actual_usd,error FROM scalper_calls WHERE version=? ORDER BY started_at DESC LIMIT 1',[VERSION])}
+            'last_call':self.db.one('SELECT id,credential_id,started_at,state,input_tokens,actual_usd,error FROM scalper_calls WHERE version=? ORDER BY started_at DESC LIMIT 1',[VERSION])}

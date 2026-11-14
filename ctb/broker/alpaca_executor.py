@@ -100,6 +100,24 @@ class AlpacaExecutor(Executor):
         return (position['side'] == ('Buy' if t['side'] == 'long' else 'Sell')
                 and math.isclose(float(position['size']), float(t['qty']), rel_tol=1e-6, abs_tol=1e-8))
 
+    def resolve_unattempted_entry(self, trade):
+        """A rejected preflight with no atomic attempt cannot have sent an order."""
+        if not self.coordinator or trade['status']!='opening': return False
+        intent=self.coordinator.one('SELECT * FROM execution_intents WHERE account_id=? AND owner_type=? AND owner_record=? AND client_order_id=?',
+            [self.account_id,'legacy',str(trade['id']),trade['entry_link_id']])
+        if not intent or intent['attempted_at'] is not None or intent['status'] not in ('rejected','expired','canceled'):
+            return False
+        reason='Entry was rejected before broker submission: '+str(intent.get('error') or intent['status'])
+        self.db.update('trades',trade['id'],{'status':'error','notes':reason})
+        decision=self.db.one('SELECT * FROM decisions WHERE id=?',[trade.get('decision_id')])
+        if decision:
+            detail=decision.get('decision_json') or {}
+            detail['execution']={'ok':False,'never_submitted':True,'reason':reason}
+            detail['reason']=reason
+            self.db.update('decisions',decision['id'],{'action':'hold','decision_json':detail})
+        self.db.event('warn','entry_not_dispatched',reason,trade['symbol'])
+        return True
+
     async def open(self, *, symbol, side, sl_bp, tp_bp, decision_id, ev_r, exploration=False,
                    decision_price=None, horizon_min=None, vol_state=None, regime=None, events=None):
         async with self._entry_lock:
@@ -215,12 +233,22 @@ class AlpacaExecutor(Executor):
                 await self.sync()
                 return {"ok": float(order.get('filled_qty') or 0) > 0, "trade_id": t_id, "status": order['status']}
             except AlpacaError as exc:
-                if exc.status >= 500:
-                    return {"ok": False, "reason": "Ambiguous broker error; entry retained for reconciliation"}
+                if self.resolve_unattempted_entry(self.db.one('SELECT * FROM trades WHERE id=?',[t_id])):
+                    return {'ok':False,'never_submitted':True,'reason':self.db.one('SELECT notes FROM trades WHERE id=?',[t_id])['notes']}
+                intent=self.coordinator.one('SELECT * FROM execution_intents WHERE account_id=? AND client_order_id=?', [self.account_id,link]) if self.coordinator else None
+                attempted_unresolved=bool(intent and intent['attempted_at'] is not None
+                    and not (intent['status']=='rejected' and not intent.get('broker_json')))
+                if attempted_unresolved or exc.status >= 500 or exc.status in (404,408,429):
+                    return {"ok": False, "reason": "Broker outcome unresolved; entry retained for reconciliation"}
                 self.db.update('trades', t_id, {"status": "error", "notes": str(exc)})
                 return {"ok": False, "reason": str(exc)}
             except (aiohttp.ClientError, asyncio.TimeoutError):
                 return {"ok": False, "reason": "Ambiguous entry response; retained durable id for reconciliation"}
+            except Exception:
+                trade=self.db.one('SELECT * FROM trades WHERE id=?',[t_id])
+                if self.resolve_unattempted_entry(trade):
+                    return {'ok':False,'never_submitted':True,'reason':self.db.one('SELECT notes FROM trades WHERE id=?',[t_id])['notes']}
+                raise
 
     async def resolve_entry(self, t, order):
         if order['status'] not in TERMINAL:
@@ -356,6 +384,7 @@ class AlpacaExecutor(Executor):
             t = trades[0]
             if expected_trade_id is not None and t['id']!=expected_trade_id:
                 return False
+            if self.resolve_unattempted_entry(t): return False
             if t['status'] == 'opening':
                 if t.get('mode')=='candle':
                     # Keep the exit obligation through cancellation races and late fills.
@@ -432,6 +461,7 @@ class AlpacaExecutor(Executor):
                     await self.kill('kill file')
                 for t in self.owned():
                     if t['status'] == 'opening':
+                        if self.resolve_unattempted_entry(t): continue
                         order = await self.client.order(t['entry_link_id'])
                         if order['status'] not in TERMINAL and (t['deadline_ts'] <= time.time() or
                                 (asset_class(t['symbol']) != 'option' and time.time() - t['opened_ts'] > self.s.maker_wait_s + 10)):
