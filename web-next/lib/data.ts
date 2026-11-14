@@ -2,11 +2,12 @@
 // Loaders (REST, for slow-changing data) and the live socket (/ws, for everything that moves).
 import { api, WS_URL } from "./api";
 import { getState, pushBar, setState, type Tick } from "./store";
+import { latestAccount } from "./account-snapshot";
 
 export async function loadOverview() {
   const ov = await api("/api/overview");
   setState((s) => ({
-    ov,
+    ov: { ...ov, account: latestAccount(s.ov?.account, ov.account) },
     symbol: s.symbol ?? ov.settings.symbols[0],
     tf: s.ov ? s.tf : String(ov.settings.decision_tf_minutes),
   }));
@@ -93,6 +94,7 @@ export function connectSocket() {
             patch.ticks = ticks;
           }
           if (d.book && d.book.symbol === s.symbol) patch.book = { ...d.book, ts: now };
+          if (d.account && s.ov) patch.ov = { ...s.ov, account: latestAccount(s.ov.account, d.account) };
           return patch;
         });
         if (d.bar) pushBar(d.bar);
@@ -100,7 +102,7 @@ export function connectSocket() {
       }
       setState((s) => ({ socket: { ...s.socket, lastMsg: now, msgs: s.socket.msgs + 1 } }));
       const kind: string = msg.kind;
-      if (kind === "account") setState((s) => (s.ov ? { ov: { ...s.ov, account: msg.data } } : {}));
+      if (kind === "account") setState((s) => (s.ov ? { ov: { ...s.ov, account: latestAccount(s.ov.account, msg.data) } } : {}));
       else if (kind === "decision" || kind === "probe" || kind === "labels") soon("dec", loadDecisions);
       else if (kind === "trade") {
         soon("ov", loadOverview);

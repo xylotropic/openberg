@@ -295,8 +295,8 @@ function Account() {
   const st = ov.settings;
   const cells: [string, React.ReactNode, string][] = [
     ["Equity", fx(w.equity), "USD · paper"], ["Available", fx(w.available), "USD"],
-    ["Unrealised", <span key="u" className={ud(w.unrealized_pnl)}>{sg(w.unrealized_pnl)}</span>, "USD"],
-    ["Today PnL", <span key="d" className={ud(a.daily_pnl)}>{sg(a.daily_pnl)}</span>, `halts at −${st.daily_loss_limit_pct}%`],
+    ["Unrealised", <span key="u" className={ud(w.unrealized_pnl)}>{sg(w.unrealized_pnl)}</span>, ({flat:"USD · flat",live:"USD · live bid/ask",mixed:"USD · mixed marks",broker:"USD · broker marks"} as Record<string,string>)[a.unrealized_basis] || "USD"],
+    ["Today PnL", <span key="d" className={ud(a.daily_pnl)}>{sg(a.daily_pnl)}</span>, a.daily_pnl_available === false ? "Prior-day equity unavailable" : `halts at −${st.daily_loss_limit_pct}%`],
     ["Positions", <span key="p">{a.positions.length}/{st.max_positions} <button className="mini" onClick={() => setPosCap()} data-tip="Change the max number of open positions. Applies to new entries only.">CAP</button></span>, `${a.open_orders} open orders`],
     [st.scalper_enabled ? "Allocation / trade" : "Risk / trade", `${st.scalper_enabled ? 5 : st.exploration_mode ? Math.min(st.explore_risk_pct, st.risk_per_trade_pct) : st.risk_per_trade_pct}%`, `entry cap ${st.max_entry_slip_bp}bp · ≤${st.max_leverage}x`],
   ];
@@ -315,8 +315,8 @@ function Account() {
               {a.positions.map((x: any) => (
                 <tr key={x.symbol}>
                   <td className="sym">{short(x.symbol)}</td><td><span className={`tag ${x.side}`}>{x.side.toUpperCase()}</span></td>
-                  <td className="r">{x.size}</td><td className="r">{x.entry}</td><td className="r">{x.mark}</td>
-                  <td className={`r ${ud(x.upnl)}`}>{sg(x.upnl)}</td><td className="r">{x.sl || <span className="dn">NONE</span>}</td><td className="r">{x.tp || "—"}</td>
+                  <td className="r">{x.size}</td><td className="r">{x.entry}</td><td className="r" data-tip={x.mark_stale ? "Broker mark · live quote unavailable" : `Live ${x.side === "long" ? "bid" : "ask"}`}>{x.mark}{x.mark_stale && <span className="tag amb"> BROKER</span>}</td>
+                  <td className={`r ${ud(x.upnl)}`} data-tip="Unrealized estimate before fees">{sg(x.upnl)}</td><td className="r">{x.sl || <span className="dn">NONE</span>}</td><td className="r">{x.tp || "—"}</td>
                   <td>{x.owner === "alpha" ? <button className="mini" onClick={() => setState({ view: "alpha" })}>ALPHA</button> : x.owned ? <button className="mini" onClick={() => closePos(x.symbol)}>CLOSE</button> : <span className="muted">{x.owner === "manual" ? "MANUAL" : "EXTERNAL"}</span>}</td>
                 </tr>
               ))}

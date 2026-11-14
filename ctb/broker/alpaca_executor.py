@@ -525,6 +525,16 @@ class AlpacaExecutor(Executor):
 
     def account_view(self):
         view = super().account_view()
+        from .display import mark_positions,mark_basis
+        view['view_at']=time.time()
+        view['wallet']=dict(view['wallet'])
+        view['positions']=mark_positions(view['positions'],self.feed.store,time.time())
+        view['wallet']['broker_unrealized_pnl']=view['wallet'].get('unrealized_pnl')
+        view['wallet']['unrealized_pnl']=sum(p['upnl'] for p in view['positions'])
+        view['unrealized_basis']=mark_basis(view['positions'])
+        # A zero prior-day equity on a newly funded paper account is not a gain.
+        view['daily_pnl_available']=float(self.account.get('last_equity') or 0)>0
+        if not view['daily_pnl_available']: view['daily_pnl']=None
         owned = {t['symbol']: t for t in self.owned()}
         for p in view['positions']:
             t = owned.get(p['symbol'])
@@ -541,7 +551,9 @@ class AlpacaExecutor(Executor):
                         p['strategy_exit']=row['exit_deadline'] if row else None
         return {**view, "venue": "alpaca", "account_id": self.account_id, "currency": "USD", "paper": True,
                 "options_trading_level": self.account.get('options_trading_level'), "market_clock": self.clock,
-                "pnl_basis": "gross broker fills; fees unavailable"}
+                "pnl_basis": {'flat':'No open positions','live':'Live bid/ask unrealized estimate, excluding fees',
+                    'mixed':'Mixed live bid/ask and broker unrealized estimate, excluding fees',
+                    'broker':'Broker-reported unrealized P&L'}[view['unrealized_basis']]}
 
     async def option_entry(self, symbol: str, qty: int, limit_price: float):
         if asset_class(symbol) != 'option' or type(qty) is not int or not 1 <= qty <= 100:

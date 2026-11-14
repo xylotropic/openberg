@@ -299,6 +299,11 @@ def make_app(engine: Engine) -> web.Application:
             return j(engine.db.query("SELECT * FROM trades WHERE run_id=? ORDER BY id DESC LIMIT 1000", (int(run),)))
         return j(engine.db.query("SELECT * FROM trades ORDER BY id DESC LIMIT 1000"))
 
+    @routes.get('/api/chart-fills')
+    async def chart_fill_events(req):
+        from .broker.display import chart_fills
+        return j(chart_fills(engine.db,s.alpaca_account_id,req.query.get('symbol')) if s.venue=='alpaca' else [])
+
     def run_summary(m: dict[str, Any]) -> dict[str, Any]:
         t, e, mq, ops = m["trading"], m.get("edge") or {}, m.get("model_quality") or {}, m["ops"]
         return {
@@ -841,6 +846,12 @@ def make_app(engine: Engine) -> web.Application:
                 if bar and last_sent.get("_bar") != (watch["symbol"], watch["tf"], bar):
                     last_sent["_bar"] = (watch["symbol"], watch["tf"], bar)
                     out["bar"] = {"symbol": watch["symbol"], "tf": watch["tf"], **bar}
+                if s.venue=='alpaca' and engine.executor:
+                    from .broker.display import mark_key
+                    marks=mark_key(engine.executor,engine.store,time.time())
+                    if last_sent.get('_account_marks')!=marks:
+                        last_sent['_account_marks']=marks
+                        out['account']=engine.executor.account_view()
                 if out:
                     out["ts"] = time.time()
                     await ws.send_str(json.dumps({"kind": "market", "data": out}, default=str))

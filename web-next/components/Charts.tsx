@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import {
   createChart, type IChartApi, type ISeriesApi, type SeriesMarker, type Time, type UTCTimestamp,
 } from "lightweight-charts";
-import { api } from "@/lib/api";
+import { api as requestApi } from "@/lib/api";
 import { getState, setBarSink, useStore, type Bar } from "@/lib/store";
 import { cssVar, decimalsOf, fx, ud, usd } from "@/lib/format";
+import { chartMarkers, fillLoader } from "@/lib/chart-markers";
 
 type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number };
 
@@ -43,6 +44,16 @@ export function PriceChart() {
   const symbol = useStore((s) => s.symbol);
   const tf = useStore((s) => s.tf);
   const decisions = useStore((s) => s.decisions);
+  const [fillState, setFills] = useState<{symbol:string;rows:any[]}>({symbol:"",rows:[]});
+  const tradeRev = useStore((s) => s.rev.trades);
+  useEffect(() => {
+    if (!symbol) return;
+    const loader = fillLoader(signal => requestApi<any[]>(`/api/chart-fills?symbol=${encodeURIComponent(symbol)}`, {signal}),
+      rows => setFills({symbol,rows}));
+    void loader.refresh();
+    const timer = setInterval(() => { if (!document.hidden) void loader.refresh(); }, 5000);
+    return () => { loader.stop(); clearInterval(timer); };
+  }, [symbol, tradeRev]);
 
   useEffect(() => {
     const chart = createChart(host.current!, baseOpts() as any);
@@ -128,31 +139,13 @@ export function PriceChart() {
     });
   }, [mkt]);
 
-  // Kairos decision markers: a decision made just after a bar close describes that bar
+  // Plot decisions at their actual as-of time and broker fills at filled_at.
   useEffect(() => {
     const a = api.current;
     if (!a || !mkt?.bars?.length) return;
-    const tfs = Number(mkt.tf) * 60, first = mkt.bars[0].time;
     const up = cssVar("--up"), dn = cssVar("--down");
-    const marks: SeriesMarker<Time>[] = decisions
-      .filter((d) => d.symbol === mkt.symbol && !d.error_kind && !d.probe && d.ts >= first)
-      .map((d) => ({
-        time: (Math.floor((d.ts - 10) / tfs) * tfs) as UTCTimestamp,
-        position: d.action === "short" ? "aboveBar" : "belowBar",
-        color: d.action === "long" ? up : d.action === "short" ? dn : "#6a6a6a",
-        shape: d.action === "long" ? "arrowUp" : d.action === "short" ? "arrowDown" : "circle",
-        size: d.action === "flat" ? 0.35 : 1.1,
-        text: d.action === "flat" ? "" : d.action.toUpperCase(),
-      }) as SeriesMarker<Time>)
-      .filter((m) => byTime.current.has(m.time as number))
-      .sort((x, y) => (x.time as number) - (y.time as number));
-    const dedup: SeriesMarker<Time>[] = [];
-    for (const m of marks) {
-      if (dedup.length && dedup[dedup.length - 1].time === m.time) dedup[dedup.length - 1] = m;
-      else dedup.push(m);
-    }
-    a.candles.setMarkers(dedup);
-  }, [decisions, mkt]);
+    a.candles.setMarkers(chartMarkers(decisions, fillState.symbol === mkt.symbol ? fillState.rows : [], mkt.symbol, String(mkt.tf), new Set(byTime.current.keys()), up, dn) as SeriesMarker<Time>[]);
+  }, [decisions, fillState, mkt]);
 
   const chg = ohlc ? ohlc.close - ohlc.open : 0;
   return (
@@ -186,7 +179,7 @@ export function EquityChart() {
     let active = true;
     setData(null); setError("");
     const load = async () => {
-      try { const response = await api(`/api/equity-curve?period=${period}`); if (active) { setData(response); setError(""); } }
+      try { const response = await requestApi(`/api/equity-curve?period=${period}`); if (active) { setData(response); setError(""); } }
       catch (e: any) { if (active) setError(e.message); }
     };
     void load(); const timer = setInterval(() => { if (!document.hidden) void load(); }, 30000);

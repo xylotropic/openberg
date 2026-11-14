@@ -41,6 +41,8 @@ The 0.60 action-weight gate is a provisional execution filter. A choice weight i
 
 Open **F12 STRATEGY** to inspect session selection, readiness, budget, calls and decisions. Pause/resume changes the entry switch and persists it. The kill switch disables entries and requests closure of owned bot positions. Exit workers continue while entries or Drex calls are paused. The chart FULLSCREEN control supports exit through its button or Escape. The monitor shows Alpaca paper-account equity in place of relative symbol performance.
 
+Unrealized P&L uses fresh bid prices for longs and ask prices for shorts, before fees. Quotes push position updates over the live socket; stale or unavailable quotes show broker marks. Equity and cash remain broker-reported. Charts label broker-confirmed executions **LONG FILL**, **SHORT FILL** and **EXIT FILL**, separately from strategy signals.
+
 ## Sources
 
 - [Drex models and pricing](https://console.nace.ai/docs/drex/reference/models)
