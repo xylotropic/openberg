@@ -26,6 +26,7 @@ class AlpacaFeed:
         self._depth_ts = {}
         self._trade_ts = {}
         self.streams = []
+        self._streams_by_kind = {}
         self._callbacks = set()
         self.model_symbols = list(model_symbols if model_symbols is not None else store.symbols)
         self._watched = {}
@@ -36,7 +37,8 @@ class AlpacaFeed:
 
     def subscription(self, kind):
         recent = [key[0] for key, _ in sorted(self._watched.items(), key=lambda x: x[1], reverse=True)]
-        symbols = list(dict.fromkeys(s for s in [*recent, *self.model_symbols, *self.store.symbols] if asset_class(s) == kind))[:30]
+        limit = getattr(self._streams_by_kind.get(kind), 'symbol_limit', None) or 30
+        symbols = list(dict.fromkeys(s for s in [*recent, *self.model_symbols, *self.store.symbols] if asset_class(s) == kind))[:limit]
         channels = {'quotes': symbols, 'trades': symbols, 'bars': symbols}
         if kind == 'crypto':
             channels['orderbooks'] = symbols
@@ -221,6 +223,7 @@ class AlpacaFeed:
                                   lambda kind=kind: self.subscription(kind), self.stream_message,
                                   lambda state, error, kind=kind: self.stream_status(kind, state, error))
             self.streams.append(stream)
+            self._streams_by_kind[kind] = stream
             tasks.append(asyncio.create_task(stream.run()))
         try:
             await asyncio.gather(*tasks)

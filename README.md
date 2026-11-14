@@ -29,7 +29,7 @@ Type a ticker in the command bar to select it. Commands include `ASK`, `TRADE`, 
 - **203 starter symbols:** 191 stocks/ETFs and 12 USD crypto pairs. The list covers broad indexes, sectors, rates, commodities, major companies, and crypto.
 - Search the watchlist or use **+ ADD** to validate and save another Alpaca ticker. Up to 500 watchlist symbols are supported.
 - Quote watching and the model trading universe are separate. Adding a ticker does not enable automatic trading or increase model requests.
-- Alpaca Basic allows 30 stock WebSocket symbols. Openberg prioritizes selected symbols and the model universe within that limit. Other watchlist quotes refresh through batched snapshots, normally every 10 seconds.
+- Openberg requests up to 30 priority symbols per stock or crypto stream and reduces that number if the account's entitlement rejects it. Selected symbols and the model universe take priority. Other watchlist quotes refresh through batched snapshots, normally every 10 seconds.
 - Historical charts load on demand. Chart intervals: **1m, 5m, 15m, 1h, 4h**. Switching instruments clears the previous plot and resets the price scale.
 - Model trading profiles: **1m / 30-minute horizon**, **5m / 2 hours**, **15m / 4 hours**, **1h / 12 hours**. Chart selection does not change the trading profile.
 

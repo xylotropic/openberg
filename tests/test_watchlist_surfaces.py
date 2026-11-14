@@ -146,3 +146,40 @@ def test_stream_rebalances_quotes_with_unsubscribe_ack_before_new_subscription()
                 assert received == ['SPY', 'MSFT'] and states.count('live') == 2 and 'reconnecting' not in states
         finally: await runner.cleanup()
     asyncio.run(run())
+
+
+def test_stream_recovers_lower_entitlement_without_dropping_selected_ticker():
+    async def run():
+        requests, states = [], []
+        feed = AlpacaFeed(MarketStore(['SPY', 'AAPL', 'MSFT', 'NVDA']), None, model_symbols=['SPY'])
+        feed.watch_symbol('NVDA')
+        async def handler(req):
+            ws = web.WebSocketResponse(); await ws.prepare(req)
+            await ws.send_json([{'T': 'success', 'msg': 'authenticated'}])
+            request = await ws.receive_json(); requests.append(request)
+            if len(request['quotes']) > 2:
+                await ws.send_json([{'T': 'error', 'code': 405, 'msg': 'symbol limit exceeded'}])
+            else:
+                await ws.send_json([{'T': 'subscription', **{k: v for k, v in request.items() if k != 'action'}},
+                                    {'T': 'q', 'S': 'NVDA'}])
+            await ws.receive()
+            return ws
+        app = web.Application(); app.router.add_get('/stream', handler)
+        runner = web.AppRunner(app); await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 0); await site.start()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async def message(_): stream.stop()
+                client = SimpleNamespace(configured=True, session=session, headers={})
+                port = site._server.sockets[0].getsockname()[1]
+                stream = AlpacaStream(client, f'http://127.0.0.1:{port}/stream',
+                                      lambda: feed.subscription('us_equity'), message,
+                                      lambda state, error: states.append(state))
+                feed._streams_by_kind['us_equity'] = stream
+                await asyncio.wait_for(stream.run(), timeout=5)
+                assert [len(r['quotes']) for r in requests] == [4, 2]
+                assert requests[-1]['quotes'] == ['NVDA', 'SPY']
+                assert 'live' in states and stream.symbol_limit == 2
+                assert feed.book_info('AAPL')['state'] == 'polling'
+        finally: await runner.cleanup()
+    asyncio.run(run())

@@ -12,6 +12,7 @@ class AlpacaStream:
         self.client, self.url, self.subscription = client, url, subscription
         self.on_message, self.on_status = on_message, on_status
         self._stop = asyncio.Event()
+        self.symbol_limit = None
 
     def stop(self):
         self._stop.set()
@@ -58,6 +59,12 @@ class AlpacaStream:
                             for message in messages:
                                 kind = message.get('T')
                                 if kind == 'error':
+                                    if message.get('code') == 405:
+                                        count = len({s for values in wanted.values() for s in values})
+                                        if count > 1:
+                                            # Entitlements can be stricter than the advertised plan maximum.
+                                            # Reconnect with fewer priority symbols rather than losing all streams.
+                                            self.symbol_limit = max(1, count // 2)
                                     raise RuntimeError(f"Alpaca stream {message.get('code')}: {message.get('msg')}")
                                 if kind == 'success' and message.get('msg') == 'authenticated':
                                     authenticated = True
