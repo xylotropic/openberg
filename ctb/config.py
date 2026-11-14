@@ -1,6 +1,6 @@
 """Runtime configuration. Everything is read from the environment (optionally a local .env).
 
-Secrets (KAIROS_API_KEY, TYPESAFE_API_KEY, BYBIT_API_KEY, BYBIT_API_SECRET) are only ever read here and passed
+Secrets (NACE_API_KEY, KAIROS_API_KEY, TYPESAFE_API_KEY, BYBIT_API_KEY, BYBIT_API_SECRET) are only ever read here and passed
 to the clients that need them. They are never logged, stored in SQLite, or sent to the browser.
 """
 
@@ -96,6 +96,8 @@ def _list(name: str, default: str) -> list[str]:
 
 @dataclass
 class Settings:
+    venue: str = os.environ.get("CTB_VENUE", "bybit").strip().lower()
+    alpaca_account_id: str = os.environ.get("CTB_ALPACA_ACCOUNT_ID", "")
     # --- markets ---
     symbols: list[str] = field(default_factory=lambda: _list("CTB_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,DOGEUSDT"))
     decision_tf: str = os.environ.get("CTB_DECISION_TF", "5")  # Bybit interval string, minutes
@@ -103,8 +105,8 @@ class Settings:
     atr_tf: str = os.environ.get("CTB_ATR_TF", "15")  # timeframe whose ATR sizes the bracket
 
     # --- kairos ---
-    # which classification model makes the decisions: "kairos" or "jev" (see ctb/models.py)
-    model_provider: str = os.environ.get("CTB_MODEL_PROVIDER", "kairos").strip().lower()
+    # which classification model makes the decisions: "drex", "kairos" or "jev" (see ctb/models.py)
+    model_provider: str = os.environ.get("CTB_MODEL_PROVIDER", "drex").strip().lower()
     kairos_base_url: str = os.environ.get("KAIROS_BASE_URL", "https://minara.cloud").rstrip("/")
     kairos_model: str = "DMIND/Kairos"
     kairos_timeout_s: float = _f("CTB_KAIROS_TIMEOUT_S", 120)
@@ -204,6 +206,14 @@ class Settings:
     kill_file: Path = ROOT / "KILL"
 
     @property
+    def alpaca_api_key(self) -> str:
+        return os.environ.get("APCA_API_KEY_ID", "").strip()
+
+    @property
+    def alpaca_api_secret(self) -> str:
+        return os.environ.get("APCA_API_SECRET_KEY", "").strip()
+
+    @property
     def kairos_api_key(self) -> str:
         # Exact variable name only, per the Kairos contract. Never substitute another key.
         return os.environ.get("KAIROS_API_KEY", "").strip()
@@ -235,6 +245,9 @@ class Settings:
     def public_view(self) -> dict:
         """Settings safe to show in the dashboard (no secrets)."""
         return {
+            "venue": self.venue, "paper": True,
+            "venue_label": "ALPACA PAPER" if self.venue == "alpaca" else "BYBIT TESTNET",
+            "currency": "USD" if self.venue == "alpaca" else "USDT",
             "symbols": self.symbols,
             "decision_tf": self.decision_tf,
             "tf_profiles": {tf: {**p, "horizon_minutes": p["horizon_bars"] * int(tf), "required_rph": self.required_rph(tf)}
@@ -273,13 +286,12 @@ class Settings:
             "model_label": self.model_spec.label,
             "model_id": self.model_spec.model,
             "models": {p: {"label": m.label, "vendor": m.vendor, "model_id": m.model, "configured": bool(m.api_key),
-                           "news_return": m.supports_news_return} for p, m in _models().items()},
+                           "news_return": m.supports_news_return} for p, m in _models().items() if self.venue != "alpaca" or p != "jev"},
             "kairos_base_url": self.kairos_base_url,
             "kairos_model": self.kairos_model,
             "kairos_key_configured": bool(self.kairos_api_key),
             "kairos_max_requests_per_hour": self.kairos_max_requests_per_hour,
             "bybit_keys_configured": bool(self.bybit_api_key and self.bybit_api_secret),
-            "venue": "bybit-testnet",
             "strategy": self.strategy_view(),
         }
 

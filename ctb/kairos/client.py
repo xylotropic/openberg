@@ -68,17 +68,18 @@ def _error_from(status: int, body: Any, spec: ModelSpec | None = None) -> Kairos
     spec = spec or MODELS["kairos"]
     msg, code, rid = f"HTTP {status}", None, None
     if isinstance(body, dict):
+        rid = body.get("request_id")
         d = body.get("detail")
         e = body.get("error")
         if isinstance(d, dict):
             msg = d.get("message") or msg
             code = d.get("code") or d.get("error_type")
-            rid = d.get("request_id") or d.get("upstream_request_id")
+            rid = d.get("request_id") or d.get("upstream_request_id") or rid
         elif isinstance(d, (str, list)):
             msg = json.dumps(d)[:500] if isinstance(d, list) else d
         if isinstance(e, dict):
             msg = e.get("message") or msg
-            code = e.get("code") or code
+            code = e.get("code") or e.get("type") or code
             rid = e.get("request_id") or rid
         elif isinstance(e, str):
             msg = e
@@ -90,6 +91,8 @@ def _error_from(status: int, body: Any, spec: ModelSpec | None = None) -> Kairos
             msg += " | This API key may not access DMIND/Kairos: check the key belongs to a Kairos-enabled group and its model permissions include the exact model ID."
         elif status == 401:
             msg += f" | Check {spec.key_env} ({spec.key_url})."
+    elif status == 402:
+        kind = "billing"
     elif status == 529:
         kind = "overloaded"
     elif status == 429:

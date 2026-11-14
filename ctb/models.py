@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class ModelSpec:
-    provider: str                 # stable id stored with every decision ("kairos", "jev")
+    provider: str                 # stable id stored with every decision ("drex", "kairos", "jev")
     label: str                    # shown in the terminal
     vendor: str
     key_env: str                  # environment variable holding the API key
@@ -45,6 +45,15 @@ class ModelSpec:
 
 
 MODELS: dict[str, ModelSpec] = {
+    "drex": ModelSpec(
+        provider="drex", label="Drex Finance", vendor="Nace.AI",
+        key_env="NACE_API_KEY", base_url_env="NACE_BASE_URL", default_base_url="https://console.nace.ai",
+        model_env="CTB_DREX_MODEL", default_model="drex-max-finance",
+        max_questions=512, max_payload_bytes=4 * 1024 * 1024,
+        retry_statuses=frozenset({429, 529, 502, 503, 504}),
+        key_url="https://console.nace.ai/dashboard/api-keys",
+        key_hint="Create a Nace API key. Drex Max Finance is billed per input token.",
+    ),
     "kairos": ModelSpec(
         provider="kairos", label="Kairos", vendor="DMind via Minara Cloud",
         key_env="KAIROS_API_KEY", base_url_env="KAIROS_BASE_URL", default_base_url="https://minara.cloud",

@@ -17,7 +17,7 @@ export type State = {
   perf: Record<string, [number, number][]>;
   symbol: string | null;
   tf: string;
-  view: "mon" | "eval" | "valid" | "trades" | "news" | "log";
+  view: "mon" | "eval" | "valid" | "trades" | "news" | "log" | "options" | "filings";
   ticks: Record<string, Tick>;
   book: Book | null;
   socket: { connected: boolean; lastMsg: number; latencyMs: number | null; msgs: number };

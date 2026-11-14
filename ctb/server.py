@@ -80,6 +80,62 @@ def make_app(engine: Engine) -> web.Application:
     s = engine.s
     app = web.Application(middlewares=[dev_cors, same_origin_only])
     routes = web.RouteTableDef()
+    research = None
+
+    def research_plugins():
+        nonlocal research
+        if s.venue != "alpaca":
+            raise ValueError("Research workspaces require the Alpaca venue")
+        if research is None:
+            from .research import Research
+            research = Research(engine.session, engine.alpaca)
+        return research
+
+    async def research_response(fn):
+        from .broker.alpaca import AlpacaError
+        try:
+            return j(await fn())
+        except (ValueError, AlpacaError) as exc:
+            return j({"error": str(exc)}, 400)
+        except Exception as exc:
+            return j({"error": str(exc)}, 502)
+
+    @routes.get("/api/research/plugins")
+    async def plugins(_):
+        return j({"plugins": [
+            {"id": "alpaca-news", "name": "Alpaca Newsroom", "source": "https://data.alpaca.markets/v1beta1/news",
+             "pricing": "Uses the current Alpaca entitlement; no paid upgrade is enabled"},
+            {"id": "sec-edgar", "name": "SEC EDGAR · all forms", "source": "https://data.sec.gov/submissions/",
+             "pricing": "Free public SEC API; no API key"}]})
+
+    @routes.get("/api/research/news")
+    async def research_news(req):
+        return await research_response(lambda: research_plugins().newsroom(req.query.get("symbol", ""), req.query.get("page_token")))
+
+    @routes.get("/api/research/filings")
+    async def research_filings(req):
+        async def get():
+            return await research_plugins().filings(req.query.get("query", "AAPL"), archive=req.query.get("archive"),
+                offset=max(0, int(req.query.get("offset", 0))), limit=min(200, max(1, int(req.query.get("limit", 100)))),
+                form=req.query.get("form", ""))
+        return await research_response(get)
+
+    @routes.get("/api/options")
+    async def options(req):
+        return await research_response(lambda: research_plugins().options(req.query.get("underlying", "SPY").upper(),
+            page_token=req.query.get("page_token"), expiry=req.query.get("expiry"), kind=req.query.get("type")))
+
+    @routes.post("/api/options/order")
+    async def options_order(req):
+        async def submit():
+            if s.venue != "alpaca" or not engine.executor:
+                raise ValueError("Connect the Alpaca paper account first")
+            body = await req.json()
+            qty = body.get("qty")
+            if isinstance(qty, bool) or not isinstance(qty, int):
+                raise ValueError("Quantity must be a whole number")
+            return await engine.executor.option_entry(str(body.get("symbol", "")).upper(), qty, float(body.get("limit_price", 0)))
+        return await research_response(submit)
 
     @routes.get("/")
     async def index(_: web.Request) -> web.StreamResponse:
@@ -105,7 +161,7 @@ def make_app(engine: Engine) -> web.Application:
                        "budget_per_hour": engine.budget.per_hour, "news_requests_last_hour": engine.news_budget.used(),
                        "last_error": engine.last_decision_error, "probe_rate": engine.probe_rate, "inflight": sorted(engine.inflight)},
             "account": ex.account_view() if ex else None,
-            "executor_error": (ex.sync_error if ex else "no Bybit testnet keys configured"),
+            "executor_error": (ex.sync_error if ex else "no Alpaca paper keys configured" if s.venue == "alpaca" else "no Bybit testnet keys configured"),
             "labelled_total": (engine.db.one("SELECT COUNT(*) n FROM decisions WHERE label_json IS NOT NULL") or {}).get("n", 0),
         })
 
@@ -295,6 +351,10 @@ def make_app(engine: Engine) -> web.Application:
             return j({"error": "unknown symbol"}, 404)
         if not engine.kairos.configured:
             return j({"error": f"{engine.kairos.spec.key_env} is not set"}, 400)
+        if s.venue == "alpaca":
+            ready, why = engine.feed.decision_ready(sym)
+            if not ready:
+                return j({"error": why}, 409)
         row = await engine.decide(sym, force_probe=bool(body.get("probe")))
         return j(engine._decision_view(row) if row else {"skipped": True})
 
@@ -408,13 +468,26 @@ def make_app(engine: Engine) -> web.Application:
     async def keys_status(_: web.Request) -> web.Response:
         return j({
             "kairos": {**key_hint(s.kairos_api_key), "base_url": s.kairos_base_url},
-            "jev": {**key_hint(models_mod.MODELS["jev"].api_key), "base_url": models_mod.MODELS["jev"].base_url,
-                    "model_id": models_mod.MODELS["jev"].model},
+            **{provider: {**key_hint(spec.api_key), "base_url": spec.base_url, "model_id": spec.model}
+               for provider, spec in models_mod.MODELS.items() if provider != "kairos"},
             "active_model": s.model_provider,
+            "alpaca": {"api_key": key_hint(s.alpaca_api_key), "api_secret": key_hint(s.alpaca_api_secret),
+                       "connected": bool(s.venue == "alpaca" and engine.executor and not engine.executor.sync_error),
+                       "paper": True, "account_id": s.alpaca_account_id},
             "bybit": {"api_key": key_hint(s.bybit_api_key), "api_secret": key_hint(s.bybit_api_secret),
                       "connected": bool(engine.executor and not engine.executor.sync_error),
                       "error": engine.executor.sync_error if engine.executor else None},
         })
+
+    @routes.post("/api/keys/alpaca")
+    async def keys_alpaca(req):
+        async def save():
+            body = await req.json()
+            key, secret = str(body.get("api_key", "")).strip(), str(body.get("api_secret", "")).strip()
+            if not key or not secret:
+                raise ValueError("Alpaca paper API key and secret are both required")
+            return await engine.set_alpaca_keys(key, secret)
+        return await research_response(save)
 
     @routes.post("/api/keys/bybit")
     async def keys_bybit(req: web.Request) -> web.Response:
@@ -445,17 +518,23 @@ def make_app(engine: Engine) -> web.Application:
     async def keys_kairos_test(_: web.Request) -> web.Response:
         return j(await engine.test_model("kairos"))
 
-    @routes.post("/api/keys/jev")
-    async def keys_jev(req: web.Request) -> web.Response:
+    @routes.post("/api/keys/{provider}")
+    async def keys_model(req: web.Request) -> web.Response:
+        provider = req.match_info["provider"]
+        if provider not in models_mod.MODELS:
+            return j({"error": "unknown model provider"}, 404)
         body = await req.json()
         key = str(body.get("api_key", "")).strip()
         if not key:
             return j({"error": "API key is required"}, 400)
-        return j(await engine.set_model_key("jev", key))
+        return j(await engine.set_model_key(provider, key))
 
-    @routes.post("/api/keys/jev/test")
-    async def keys_jev_test(_: web.Request) -> web.Response:
-        return j(await engine.test_model("jev"))
+    @routes.post("/api/keys/{provider}/test")
+    async def keys_model_test(req: web.Request) -> web.Response:
+        provider = req.match_info["provider"]
+        if provider not in models_mod.MODELS:
+            return j({"error": "unknown model provider"}, 404)
+        return j(await engine.test_model(provider))
 
     @routes.post("/api/model")
     async def set_model(req: web.Request) -> web.Response:
@@ -488,7 +567,12 @@ def make_app(engine: Engine) -> web.Application:
     # ---------------------------------------------------------------- symbol universe
     @routes.get("/api/universe")
     async def universe(_: web.Request) -> web.Response:
-        cands = await universe_mod.candidates(engine.session, engine.store.context.get("universe_all", []), s.symbols, s.max_notional_usdt)
+        if s.venue == "alpaca":
+            from .broker.alpaca import asset_class
+            known = list(dict.fromkeys([*s.symbols, "SPY", "QQQ", "IWM", "DIA", "AAPL", "MSFT", "NVDA", "AMD", "TSLA", "AMZN", "META", "GOOGL", "BTC/USD", "ETH/USD", "SOL/USD", "DOGE/USD", "LTC/USD"]))
+            cands = [{"symbol": sym, "selected": sym in s.symbols, "asset_type": asset_class(sym)} for sym in known]
+        else:
+            cands = await universe_mod.candidates(engine.session, engine.store.context.get("universe_all", []), s.symbols, s.max_notional_usdt)
         per_sym = s.required_rph(probe_rate=engine.probe_rate) / max(1, len(s.symbols))
         return j({"selected": s.symbols, "candidates": cands, "max_symbols": universe_mod.MAX_SYMBOLS,
                   "budget_per_hour": s.kairos_max_requests_per_hour, "rph_per_symbol": round(per_sym, 2),
@@ -501,18 +585,31 @@ def make_app(engine: Engine) -> web.Application:
         every feed, stream, store and instrument filter is rebuilt for the new list."""
         body = await req.json()
         syms = [str(x).strip().upper() for x in body.get("symbols") or []]
-        errs = await universe_mod.validate(engine.session, syms)
+        if s.venue == "alpaca":
+            errs = []
+            if not syms or len(syms) > 30 or len(set(syms)) != len(syms):
+                errs.append("Choose 1–30 distinct Alpaca symbols")
+            if not errs:
+                for sym in syms:
+                    try:
+                        asset = await engine.alpaca.asset(sym)
+                        if not asset.get("tradable"):
+                            errs.append(f"{sym} is not tradable on Alpaca")
+                    except Exception as exc:
+                        errs.append(f"{sym}: {exc}")
+        else:
+            errs = await universe_mod.validate(engine.session, syms)
         if errs:
             return j({"error": "; ".join(errs)}, 400)
         open_syms = {r["symbol"] for r in engine.db.query("SELECT symbol FROM trades WHERE status IN ('open','opening')")}
         if dropped := sorted(open_syms - set(syms)):
             return j({"error": f"{', '.join(dropped)} still has an open bot trade; close it (or wait for its exit) before removing it"}, 409)
         minutes = s.decision_tf_minutes
-        need = int(round(len(syms) * (60 / minutes) * (1 + 3 * engine.probe_rate)))
+        need = int(round(len(syms) * (60 / minutes) * ((2 if s.symmetrize else 1) + 3 * engine.probe_rate)))
         updates = {"CTB_SYMBOLS": ",".join(syms)}
         if need > s.kairos_max_requests_per_hour:
             if not body.get("raise_budget"):
-                return j({"error": f"{len(syms)} symbols on {minutes}m bars need ~{need} Kairos requests/hour; the cap is "
+                return j({"error": f"{len(syms)} symbols on {minutes}m bars need ~{need} model requests/hour; the cap is "
                                    f"{s.kairos_max_requests_per_hour}. Remove symbols, use a slower trading timeframe, or raise the cap.",
                           "need": need}, 409)
             updates["CTB_KAIROS_MAX_RPH"] = str(need)
@@ -639,7 +736,7 @@ def main() -> None:
     if os.environ.pop("CTB_RESUME_TRADING", None) == "1":
         s.trading_enabled = True  # restart requested by the symbol picker while auto-trade was on
     engine = Engine(s)
-    print(f"Calibrain Harness: http://{s.host}:{s.port}  (venue: Bybit TESTNET, "
+    print(f"Calibrain Harness: http://{s.host}:{s.port}  (venue: {s.public_view()['venue_label']}, "
           f"model {s.model_spec.label} ({s.model_spec.model}) key {'set' if s.model_spec.api_key else 'NOT set'}, "
           f"trading {'ON' if s.trading_enabled else 'observe-only'})")
     web.run_app(make_app(engine), host=s.host, port=s.port, print=None)

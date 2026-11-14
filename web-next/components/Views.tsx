@@ -107,7 +107,7 @@ export function EvalView() {
     ["ρ(EV, realised R)", sg(edge.spearman_ev_vs_realised_r, 3), `n = ${edge.n || 0} side-decisions`],
     ["Strict signals R", sg(edge.strict_signals_mean_r, 3), `n = ${edge.strict_signals_n || 0} · win ${pct(edge.strict_signals_win_rate)}`],
     ["Explore signals R", sg(edge.exploration_signals_mean_r, 3), `n = ${edge.exploration_signals_n || 0} · win ${pct(edge.exploration_signals_win_rate)}`],
-    ["Testnet net PnL", <span key="p" className={ud(t.net_pnl_usdt)}>{sg(t.net_pnl_usdt)}</span>, `${t.closed} trades · from Bybit closed-PnL`],
+    ["Paper fill P&L", <span key="p" className={ud(t.net_pnl_usdt)}>{sg(t.net_pnl_usdt)}</span>, `${t.closed} trades · from Alpaca fills · gross`],
   ];
   const qr = (b: any, k = "brier") => b && b.n ? (
     <tr key={b.name}><td className="amb">{b.name}</td><td className="r">{b.n}</td><td className="r">{fx(b[k], 4)}</td><td className="r">{fx(b[k + "_climatology"], 4)}</td><td className="r">{fx(b[k + "_uniform"], 4)}</td>
@@ -161,15 +161,15 @@ export function EvalView() {
           ["Latency p99", isNum(ops.latency_ms_p99) ? fx(ops.latency_ms_p99, 0) + " ms" : "—"], ["Input tokens mean / max", `${fx(ops.input_tokens_mean, 0)} / ${ops.input_tokens_max ?? "—"}`],
           ["Retried", ops.retried_requests], ["Policy actions", Object.entries<any>(m.policy.actions).map(([k, v]) => `${k} ${v}`).join(", ") || "—"],
         ]} /></Panel>
-        <Panel code="PNL" title="Testnet trading · Bybit closed-PnL, every fill" tight>{t.closed ? <KV rows={[
-          ["Closed trades", t.closed], ["Net PnL (after fees)", <span key="n" className={ud(t.net_pnl_usdt)}>{sg(t.net_pnl_usdt)} USDT</span>], ["Fees", `${fx(t.fees_usdt)} USDT`],
+        <Panel code="PNL" title="Paper trading · Alpaca order fills" tight>{t.closed ? <KV rows={[
+          ["Closed trades", t.closed], ["Fill P&L (gross)", <span key="n" className={ud(t.net_pnl_usdt)}>{sg(t.net_pnl_usdt)} USD</span>], ["Fees", `${fx(t.fees_usdt)} USD`],
           ["Win rate", fx(t.win_rate, 3)], ["Profit factor", fx(t.profit_factor, 2)], ["Avg realised R", sg(t.avg_r, 3), "PnL ÷ (qty × |entry − live stop|)"], ["Avg predicted EV", sg(t.avg_predicted_ev_r, 3) + "R"],
-          ["Max drawdown", `${fx(t.max_drawdown_usdt)} USDT`],
+          ["Max drawdown", `${fx(t.max_drawdown_usdt)} USD`],
           ["By mode", Object.entries<any>(t.by_mode || {}).map(([k, v]) => `${k} ${v.n} · ${sg(v.pnl)} · win ${(100 * v.win_rate).toFixed(0)}%`).join(" | ") || "—"],
           ["Exit reasons", Object.entries<any>(t.by_reason).map(([k, v]) => `${k} ${v}`).join(", ")],
-        ]} /> : <div className="empty">No closed testnet trades yet</div>}</Panel>
-        <Panel code="EXEC" title="Execution quality · real testnet fills" tight><KV rows={[
-          ["Entry slippage", dist(ex.entry_slip_bp), "Fill vs best testnet price at order time; + = worse"],
+        ]} /> : <div className="empty">No closed paper trades yet</div>}</Panel>
+        <Panel code="EXEC" title="Execution quality · broker paper fills" tight><KV rows={[
+          ["Entry slippage", dist(ex.entry_slip_bp), "Fill vs Alpaca quote at order time; + = worse"],
           ["Stop exit slippage", dist(ex.stop_exit_slip_bp), "Stop fill vs trigger; + = worse"],
           ["Target exit slippage", dist(ex.target_exit_slip_bp), "Target fill vs trigger; + = worse"],
           ["Entry latency", ex.entry_latency_ms ? `${fx(ex.entry_latency_ms.p50, 0)} ms p50 · p90 ${fx(ex.entry_latency_ms.p90, 0)}` : "—", "Order sent → fill confirmed"],
@@ -205,7 +205,7 @@ function RunsTable({ runs, overall, sel, onSel }: { runs: any[]; overall: any; s
         <td className="r">{fx(r.profit_factor, 2)}</td>
         <td className="r">{isNum(r.entry_slip_bp) ? sg(r.entry_slip_bp, 1) : "—"}</td>
         <td className="r">{isNum(r.stop_slip_bp) ? sg(r.stop_slip_bp, 1) : "—"}</td>
-        <td className="r" data-tip="Signals scored on mainnet labels (traded or not)">{r.strict_n ? `${r.strict_n} · ${sg(r.strict_r, 2)}R` : "0"} / {r.explore_n ? `${r.explore_n} · ${sg(r.explore_r, 2)}R` : "0"}</td>
+        <td className="r" data-tip="Signals scored on Alpaca market labels (traded or not)">{r.strict_n ? `${r.strict_n} · ${sg(r.strict_r, 2)}R` : "0"} / {r.explore_n ? `${r.explore_n} · ${sg(r.explore_r, 2)}R` : "0"}</td>
         <td className={`r ${ud(r.skill_long)}`}>{sg(r.skill_long, 2)} / {sg(r.skill_short, 2)}</td>
         <td className={`r ${ud(r.vs_base_long)}`}>{sg(r.vs_base_long, 2)}</td>
       </tr>
@@ -236,11 +236,11 @@ export function TradesView() {
   return (
     <main className="view on">
       <section className="pnl" style={{ marginBottom: 4 }}>
-        <div className="ph"><span className="code">RUNS</span>Test runs · click a row to filter the trades below<span className="ph-r">PnL from Bybit closed-PnL · signals and skill from mainnet labels</span></div>
+        <div className="ph"><span className="code">RUNS</span>Test runs · click a row to filter the trades below<span className="ph-r">PnL from Alpaca fills · gross · signals and skill from Alpaca market labels</span></div>
         <div className="pb tight scroll">{runs ? <RunsTable runs={runs.runs} overall={runs.overall} sel={run} onSel={setRun} /> : <div className="empty">Loading runs…</div>}</div>
       </section>
       <section className="pnl">
-        <div className="ph"><span className="code">TRD</span>Bot trades · {run ? `Run ${run}` : "all runs"} · Bybit testnet<span className="ph-r">P&amp;L, fees and exit price summed from every Bybit closed-PnL row</span></div>
+        <div className="ph"><span className="code">TRD</span>Bot trades · {run ? `Run ${run}` : "all runs"} · Alpaca paper<span className="ph-r">Fill P&amp;L is gross; per-trade fee availability is recorded separately</span></div>
         <div className="pb tight scroll">
           {!ts ? <div className="empty">Loading…</div> : !ts.length ? <div className="empty">No trades yet. They appear once a model key is set and AUTO-TRADE is on.</div> : (
             <table className="t">

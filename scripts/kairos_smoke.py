@@ -1,7 +1,7 @@
 """One live model request with a real market state; prints validation results (never the key).
 
     .venv/bin/python scripts/kairos_smoke.py SOLUSDT              # the active model (CTB_MODEL_PROVIDER)
-    .venv/bin/python scripts/kairos_smoke.py SOLUSDT --model jev  # a specific model: kairos | jev
+    .venv/bin/python scripts/kairos_smoke.py SOLUSDT --model drex # a specific model: drex | kairos | jev
 """
 import asyncio
 import json

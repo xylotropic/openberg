@@ -18,6 +18,7 @@ def config_snapshot(s: Settings) -> dict[str, Any]:
     from .kairos.questions import QUESTION_SET_VERSION
 
     return {
+        "venue": s.venue,
         "model_provider": s.model_provider, "model_id": s.model_spec.model,
         "symbols": s.symbols, "decision_tf": s.decision_tf, "horizon_minutes": s.horizon_bars * s.decision_tf_minutes,
         "qset": QUESTION_SET_VERSION, "exploration_mode": s.exploration_mode, "exit_mode": s.exit_mode,

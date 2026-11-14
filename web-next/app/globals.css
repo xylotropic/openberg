@@ -1,6 +1,15 @@
 /* Classifier Trading Terminal: black-glass terminal styling.
    Hierarchy comes from brightness (amber labels, white values, grey context), not size.
    Direction is never colour-only: every change carries a +/− sign or a word. */
+/* Avenir 85 Heavy is supplied by macOS; keep the licensed font on this Mac.
+   Bergoom's bundled web fonts are distributed under the included OFL license. */
+@font-face {
+  font-family: "Avenir 85 Heavy";
+  src: local("Avenir-Heavy"), local("Avenir Heavy");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 :root {
   color-scheme: dark;
   --bg: #000;
@@ -9,20 +18,20 @@
   --bar-2: #0c0c0c;
   --line: #242424;
   --line-2: #1a1a1a;
-  --amber: #ffa028;
-  --amber-dim: #a8661a;
+  --amber: #ff9b00;
+  --amber-dim: #c58521;
   --text: #f0f0f0;
   --text-2: #c8c8c8;
   --muted: #858585;
-  --up: #3ad08a;
-  --down: #ff5c5c;
+  --up: #00d084;
+  --down: #ff4d4f;
   --up-bg: rgba(58, 208, 138, .16);
   --down-bg: rgba(255, 92, 92, .16);
   --sel: #13324f;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+  --s1: #4da3ff; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
   --warn: #fab219; --crit: #d03b3b;
-  --mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
-  --cond: var(--font-plex-cond), "Arial Narrow", system-ui, sans-serif;
+  --mono: var(--font-bergoom), "Bergoom", sans-serif;
+  --cond: "Avenir 85 Heavy", "Avenir", sans-serif;
 }
 * { box-sizing: border-box; }
 html, body { background: var(--bg); }
@@ -291,7 +300,7 @@ dialog.keys { width: min(640px, 95vw); }
 
 /* ---------- Calibrain Harness brand */
 .brand .brand-svg { display: block; flex: none; }
-.brand .brand-name { font: 600 15px/1 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif; letter-spacing: -.01em; color: #fff; white-space: nowrap; }
+.brand .brand-name { font: 600 15px/1 var(--cond); letter-spacing: -.01em; color: #fff; white-space: nowrap; }
 .brand .brand-name i { font-style: normal; font-weight: 400; color: #8e8e93; }
 .brand .brand-tag { font: 600 9px var(--mono); color: var(--amber); border: 1px solid var(--amber-dim); padding: 0 4px; letter-spacing: .08em; }
 
@@ -304,3 +313,30 @@ dialog.keys { width: min(640px, 95vw); }
 dialog.strat { width: min(980px, 96vw); }
 dialog.strat input { background: var(--bar); color: var(--text); border: 1px solid var(--line); padding: 2px 6px; width: 140px; }
 dialog.strat .seg button { padding: 1px 7px; }
+
+/* Headings and interactive controls use Avenir Heavy; quotes, tables, code,
+   chart labels and other data retain Bergoom. */
+h1, h2, h3, h4, h5, h6, th, .keyhead, .toolbar label { font-family: var(--cond); }
+button, input, select, textarea,
+.cmd input, .keybox input, .prompt-row input, .unibar input[type="text"] {
+  font-family: var(--cond);
+  font-synthesis: none;
+}
+
+.research-view { max-width: 2000px; margin: 0 auto; }
+.research-view .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
+.research-view input { color: var(--text); background: var(--bar); border: 1px solid var(--line); padding: 5px 8px; max-width: 240px; }
+.research-note { padding: 10px 12px; border-bottom: 1px solid var(--line); color: var(--text-2); line-height: 1.6; }
+.research-table { overflow: auto; max-height: 65vh; }
+.research-table td { padding-top: 6px; padding-bottom: 6px; }
+.research-pagination { display: flex; align-items: center; gap: 14px; padding: 12px 0; flex-wrap: wrap; }
+.newsroom-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); }
+.newsroom-list article { padding: 14px 16px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); }
+.newsroom-list h3 { margin: 5px 0 8px; line-height: 1.4; font-size: 15px; }
+.newsroom-list p { margin: 0; color: var(--text-2); line-height: 1.6; }
+.news-meta { color: var(--muted); font-size: 11px; }
+.option-ticket { margin-top: 12px; }
+.option-ticket .toolbar, .option-ticket > p { padding: 10px 12px; margin: 0; }
+.option-ticket input { max-width: 100px; }
+.market-capabilities { display: grid; gap: 8px; padding: 10px; }
+.market-capabilities span { color: var(--muted); }

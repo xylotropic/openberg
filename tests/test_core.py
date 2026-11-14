@@ -460,7 +460,9 @@ def _jev_answers(questions):
     return out
 
 
-def test_jev_client_retries_overload_and_answers_validate(monkeypatch):
+@pytest.mark.parametrize("provider,key_env,model_id", [
+    ("jev", "TYPESAFE_API_KEY", "jev-1.14.0"), ("drex", "NACE_API_KEY", "drex-max-finance")])
+def test_systemone_client_retries_overload_and_answers_validate(monkeypatch, provider, key_env, model_id):
     import asyncio
     import json as _json
     import aiohttp
@@ -475,7 +477,7 @@ def test_jev_client_retries_overload_and_answers_validate(monkeypatch):
         seen.append({"auth": req.headers.get("Authorization"), "body": body})
         if len(seen) == 1:
             return aweb.json_response({"detail": "overloaded"}, status=529)
-        return aweb.json_response({"model": "jev-1.14.0", "answers": _jev_answers(body["questions"]),
+        return aweb.json_response({"model": model_id, "answers": _jev_answers(body["questions"]),
                                    "usage": {"input_tokens": 1234, "output_tokens": 70}})
 
     async def run():
@@ -486,9 +488,9 @@ def test_jev_client_retries_overload_and_answers_validate(monkeypatch):
         site = aweb.TCPSite(runner, "127.0.0.1", 0)
         await site.start()
         port = site._server.sockets[0].getsockname()[1]
-        monkeypatch.setenv("TYPESAFE_API_KEY", "ts-test-key-123456")
+        monkeypatch.setenv(key_env, "ts-test-key-123456")
         async with aiohttp.ClientSession() as session:
-            client = SystemOneClient(MODELS["jev"], session, base_url=f"http://127.0.0.1:{port}")
+            client = SystemOneClient(MODELS[provider], session, base_url=f"http://127.0.0.1:{port}")
             qs = {**Q, "extra_1": {"type": "noul", "instructions": "x"}, "extra_2": {"type": "noul", "instructions": "y"}}
             res = await client.ask({"last_price": 1}, qs)  # 9 questions: fine for Jev (no 8-question cap)
             parsed, issues = validate(res.answers, Q | {"extra_1": qs["extra_1"], "extra_2": qs["extra_2"]})
@@ -501,9 +503,9 @@ def test_jev_client_retries_overload_and_answers_validate(monkeypatch):
         res, parsed, issues = asyncio.run(run())
     assert res.attempts == 2  # 529 retried once
     assert seen[1]["auth"] == "Bearer ts-test-key-123456"
-    assert seen[1]["body"]["model"] == "jev-1.14.0" and "task_profile" not in seen[1]["body"]
+    assert seen[1]["body"]["model"] == model_id and "task_profile" not in seen[1]["body"]
     assert issues == [] and parsed["setup_quality"]["score"] == 1.0 and parsed["direction"]["p"] == 0.61
-    assert res.usage["input_tokens"] == 1234 and res.metadata["model"] == "jev-1.14.0"
+    assert res.usage["input_tokens"] == 1234 and res.metadata["model"] == model_id
 
 
 async def _noop():

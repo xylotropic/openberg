@@ -5,7 +5,7 @@ import { loadOverview, selectTf } from "@/lib/data";
 import { setState, useStore } from "@/lib/store";
 import { age, dt, fx, hrs, sg, short, ud, usd } from "@/lib/format";
 
-function Dialog({ className, children }: { className?: string; children: React.ReactNode }) {
+export function Dialog({ className, children }: { className?: string; children: React.ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current!;
@@ -26,13 +26,14 @@ const J = ({ x }: { x: unknown }) => <pre className="code">{JSON.stringify(x, nu
 
 export function Modals() {
   const modal = useStore((s) => s.modal);
+  const alpaca = useStore((s) => s.ov?.settings?.venue === "alpaca");
   if (!modal) return null;
   if (modal.kind === "decision") return <DecisionModal d={modal.data} />;
   if (modal.kind === "state") return <StateModal data={modal.data} />;
   if (modal.kind === "keys") return <KeysModal />;
   if (modal.kind === "help") return <HelpModal />;
   if (modal.kind === "tf") return <TfModal tf={modal.data} />;
-  if (modal.kind === "universe") return <UniverseModal />;
+  if (modal.kind === "universe") return alpaca ? <AlpacaUniverseModal /> : <UniverseModal />;
   if (modal.kind === "strategy") return <StrategyModal />;
   return null;
 }
@@ -68,7 +69,7 @@ function HelpModal() {
   const rows: [string, string][] = [
     ["BTC · ETH · SOL …", "Load a symbol into chart, model signal, book and stats"], ["ASK", "Ask the active model now for the loaded symbol (1 request)"],
     ["PRB", "Ask + repeat & mirror consistency probes (4 requests)"], ["1M 5M 15M 1H 4H", "Chart timeframe (view only)"],
-    ["POS 10", "Max open positions (1–50); new entries only"], ["TF 1M · TF 5M · TF 15M · TF 1H", "Trading timeframe: how often the model decides and trades"], ["MODEL", "Kairos or Jev: switch in the function-key bar (starts a new run)"],
+    ["POS 10", "Max open positions (1–50); new entries only"], ["TF 1M · TF 5M · TF 15M · TF 1H", "Trading timeframe: how often the model decides and trades"], ["MODEL", "Drex Finance or Kairos: switch in the function-key bar (starts a new run)"],
     ["UNIV", "Choose the symbols the bot watches and trades"], ["STRAT", "Strategy: brackets, entries, mirror averaging, triggers, filters, sizing"],
     ["MON EVAL VALID TRD NEWS LOG", "Switch screen (F1 F2 F6 F3 F4 F5)"], ["KEYS · HELP", "API credentials · this list"], ["/", "Focus the command line from anywhere"],
   ];
@@ -116,7 +117,7 @@ function TfModal({ tf }: { tf: string }) {
         </div>
         <p className="muted" style={{ margin: "8px 0 0" }}>Takes effect at the next {nxt.label} bar close. Open positions keep their original time-stop. Every decision is stamped with its timeframe, so EVAL can compare them separately. Saved to .env.</p>
         {over && <div className="warnbox"><b className="amb">BUDGET.</b> {nxt.label} needs ~{nxt.required_rph} requests/hour but the cap is {budget}. With the current cap, about {Math.round(100 * (1 - budget / nxt.required_rph))}% of bars would be skipped.</div>}
-        {tf === "1" && <div className="warnbox"><b className="amb">1M NOTE.</b> Kairos answers in ~7–13 s (measure Jev in EVAL), so 1m entries land ~10 s into the next bar, and the 40bp stop floor means fees are ~0.37R per trade.</div>}
+        {tf === "1" && <div className="warnbox"><b className="amb">1M NOTE.</b> More frequent forecasts use more model requests. Review measured latency and outcome costs in EVAL before changing the cadence.</div>}
       </div>
       <div className="keyactions" style={{ margin: "8px 10px" }}>
         {over ? <><button className="kbtn amber" onClick={() => go(true)}>SWITCH + RAISE CAP TO {nxt.required_rph}/H</button><button className="kbtn" onClick={() => go(false)}>SWITCH, KEEP CAP {budget}</button></>
@@ -139,9 +140,9 @@ function KeysModal() {
   useEffect(() => { load().catch(() => {}); }, []);
   const run = async (id: string, fn: () => Promise<void>) => { setBusy(id); try { await fn(); } finally { setBusy(null); } };
   const kairosResult = (r: any) => setKMsg(r.ok ? { ok: true, text: `Kairos reachable · ${r.latency_ms} ms · model ${r.model || "DMIND/Kairos"}` } : { ok: false, text: r.error });
-  const [jMsg, setJMsg] = useState<Msg>(null);
-  const jevKey = useRef<HTMLInputElement>(null);
-  const jevResult = (r: any) => setJMsg(r.ok ? { ok: true, text: `Jev reachable · ${r.latency_ms} ms · model ${r.model || "jev"}` } : { ok: false, text: r.error });
+  const [dMsg, setDMsg] = useState<Msg>(null);
+  const drexKey = useRef<HTMLInputElement>(null);
+  const drexResult = (r: any) => setDMsg(r.ok ? { ok: true, text: `Drex Finance reachable · ${r.latency_ms} ms · model ${r.model || "drex-max-finance"}` } : { ok: false, text: r.error });
   const Stat = ({ ok, txt }: { ok: boolean; txt: string }) => <span className={ok ? "up" : "dn"}>● {txt}</span>;
   return (
     <Dialog className="keys">
@@ -165,34 +166,34 @@ function KeysModal() {
         <div className={`keymsg ${kMsg ? (kMsg.ok ? "ok" : "bad") : ""}`}>{kMsg?.text}</div>
       </section>
       <section className="keybox">
-        <div className="keyhead"><b>JEV · TYPESAFE</b>{k && (k.jev?.set ? <Stat ok txt={`SET ${k.jev.hint} · ${k.jev.model_id}`} /> : <Stat ok={false} txt="NOT SET" />)}</div>
-        <p>Create a key in the <a href="https://console.typesafe.ai/keys" target="_blank" rel="noopener noreferrer">TypeSafe console</a>. Billed per input token. The model is pinned to a version (default <code>jev-1.14.0</code>, override with <code>CTB_JEV_MODEL</code>) so results never mix releases. Switch to Jev with MODEL in the function-key bar.</p>
-        <label>API KEY<input ref={jevKey} type="password" autoComplete="off" spellCheck={false} placeholder="paste TypeSafe API key" /></label>
+        <div className="keyhead"><b>DREX FINANCE · NACE.AI</b>{k && (k.drex?.set ? <Stat ok txt={`SET ${k.drex.hint} · ${k.drex.model_id}`} /> : <Stat ok={false} txt="NOT SET" />)}</div>
+        <p>Create a key in the <a href="https://console.nace.ai/dashboard/api-keys" target="_blank" rel="noopener noreferrer">Nace Console</a>. Uses Drex Max Finance for market decisions, billed per input token. Choose DREX FINANCE in the model selector.</p>
+        <label>API KEY<input ref={drexKey} type="password" autoComplete="off" spellCheck={false} placeholder="paste Nace API key" /></label>
         <div className="keyactions">
-          <button className="kbtn amber" type="button" disabled={!!busy} onClick={() => run("js", async () => {
-            const key = jevKey.current!.value.trim();
-            if (!key) return setJMsg({ ok: false, text: "Paste a key first" });
-            try { jevResult(await post("/api/keys/jev", { api_key: key })); jevKey.current!.value = ""; } catch (e: any) { setJMsg({ ok: false, text: e.message }); }
+          <button className="kbtn amber" type="button" disabled={!!busy} onClick={() => run("ds", async () => {
+            const key = drexKey.current!.value.trim();
+            if (!key) return setDMsg({ ok: false, text: "Paste a key first" });
+            try { drexResult(await post("/api/keys/drex", { api_key: key })); drexKey.current!.value = ""; } catch (e: any) { setDMsg({ ok: false, text: e.message }); }
             load(); loadOverview();
-          })}>{busy === "js" ? "WORKING…" : "SAVE & TEST"}</button>
-          <button className="kbtn" type="button" disabled={!!busy} onClick={() => run("jt", async () => { try { jevResult(await post("/api/keys/jev/test")); } catch (e: any) { setJMsg({ ok: false, text: e.message }); } })}>{busy === "jt" ? "WORKING…" : "TEST CURRENT KEY"}</button>
+          })}>{busy === "ds" ? "WORKING…" : "SAVE & TEST"}</button>
+          <button className="kbtn" type="button" disabled={!!busy} onClick={() => run("dt", async () => { try { drexResult(await post("/api/keys/drex/test")); } catch (e: any) { setDMsg({ ok: false, text: e.message }); } })}>{busy === "dt" ? "WORKING…" : "TEST CURRENT KEY"}</button>
           <span className="muted">A test uses 1 request from the hourly budget.</span>
         </div>
-        <div className={`keymsg ${jMsg ? (jMsg.ok ? "ok" : "bad") : ""}`}>{jMsg?.text}</div>
+        <div className={`keymsg ${dMsg ? (dMsg.ok ? "ok" : "bad") : ""}`}>{dMsg?.text}</div>
       </section>
       <section className="keybox">
-        <div className="keyhead"><b>BYBIT · TESTNET</b>{k && (k.bybit.api_key.set ? <Stat ok={k.bybit.connected} txt={`KEY ${k.bybit.api_key.hint} · ${k.bybit.connected ? "CONNECTED" : "ERROR"}`} /> : <Stat ok={false} txt="NOT SET" />)}</div>
-        <p>Create at <a href="https://testnet.bybit.com/app/user/api-management" target="_blank" rel="noopener noreferrer">testnet.bybit.com → API management</a>. Permissions: <b>Contract → Orders + Positions</b>. Leave <b>withdrawals off</b>. Mainnet keys are rejected.</p>
-        <label>API KEY<input ref={bybitKey} type="password" autoComplete="off" spellCheck={false} placeholder="testnet API key" /></label>
-        <label>API SECRET<input ref={bybitSecret} type="password" autoComplete="off" spellCheck={false} placeholder="testnet API secret" /></label>
+        <div className="keyhead"><b>ALPACA · PAPER</b>{k && (k.alpaca.api_key.set ? <Stat ok={k.alpaca.connected} txt={`KEY ${k.alpaca.api_key.hint} · ${k.alpaca.connected ? "CONNECTED" : "ERROR"}`} /> : <Stat ok={false} txt="NOT SET" />)}</div>
+        <p>Use the dedicated <a href="https://app.alpaca.markets/dashboard/overview" target="_blank" rel="noopener noreferrer">Alpaca paper account</a>. Trading is pinned to the paper API. Stock data uses IEX; crypto uses Alpaca US; options use the free indicative feed.</p>
+        <label>API KEY<input ref={bybitKey} type="password" autoComplete="off" spellCheck={false} placeholder="Alpaca paper API key" /></label>
+        <label>API SECRET<input ref={bybitSecret} type="password" autoComplete="off" spellCheck={false} placeholder="Alpaca paper API secret" /></label>
         <div className="keyactions">
           <button className="kbtn amber" type="button" disabled={!!busy} onClick={() => run("bs", async () => {
             const key = bybitKey.current!.value.trim(), secret = bybitSecret.current!.value.trim();
-            if (!key || !secret) return setBMsg({ ok: false, text: "Both key and secret are required" });
-            try { const r = await post("/api/keys/bybit", { api_key: key, api_secret: secret }); bybitKey.current!.value = bybitSecret.current!.value = ""; setBMsg({ ok: true, text: `Saved · testnet equity ${fx(r.equity)} USDT` }); } catch (e: any) { setBMsg({ ok: false, text: e.message }); }
+            if (!key || !secret) return setBMsg({ ok: false, text: "Both paper key and secret are required" });
+            try { const r = await post("/api/keys/alpaca", { api_key: key, api_secret: secret }); bybitKey.current!.value = bybitSecret.current!.value = ""; setBMsg({ ok: true, text: `Saved · paper equity $${fx(r.equity)}` }); } catch (e: any) { setBMsg({ ok: false, text: e.message }); }
             load(); loadOverview();
           })}>{busy === "bs" ? "WORKING…" : "VERIFY & SAVE"}</button>
-          <span className="muted">Checked against your testnet wallet before saving. Auto-trade switches off.</span>
+          <span className="muted">Verified against the paper account before saving. Auto-trade switches off.</span>
         </div>
         <div className={`keymsg ${bMsg ? (bMsg.ok ? "ok" : "bad") : ""}`}>{bMsg?.text}</div>
       </section>
@@ -370,4 +371,28 @@ function StrategyModal() {
       </div>
     </Dialog>
   );
+}
+
+function AlpacaUniverseModal() {
+  const symbols = useStore(s => s.ov?.settings?.symbols || []);
+  const [text, setText] = useState(symbols.join(", "));
+  const [u, setU] = useState<any>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api("/api/universe").then(setU).catch(e => setError(e.message)); }, []);
+  const apply = async () => {
+    setBusy(true); setError("");
+    try {
+      await post("/api/symbols", { symbols: text.split(/[,\s]+/).filter(Boolean).map((s: string) => s.toUpperCase()) });
+      setTimeout(() => location.reload(), 4000);
+    } catch (e: any) { setError(e.message); setBusy(false); }
+  };
+  return <Dialog className="keys"><div className="ph"><span className="code">UNIV</span>Alpaca stock and crypto universe</div>
+    <p>Enter stock tickers and USD crypto pairs. Options contracts have a separate workspace. Each symbol is verified with Alpaca before the service restarts.</p>
+    <div className="keybox"><label>SYMBOLS<input aria-label="Alpaca monitored symbols" value={text} onChange={e => setText(e.target.value.toUpperCase())} /></label>
+      <p>{u?.candidates.map((c: any) => <button key={c.symbol} className="mini" style={{ margin: 3 }} onClick={() => {
+        const list = text.split(/[,\s]+/).filter(Boolean); if (!list.includes(c.symbol)) setText([...list, c.symbol].join(", "));
+      }}>{c.symbol}</button>)}</p><p className="muted">Current request cap: {u?.budget_per_hour ?? "—"}/hour. Mirror forecasts count as separate requests.</p>
+      {error && <p className="dn">{error}</p>}<button className="kbtn amber" disabled={busy} onClick={() => void apply()}>{busy ? "APPLYING…" : "VERIFY & APPLY"}</button></div>
+  </Dialog>;
 }

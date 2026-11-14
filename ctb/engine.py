@@ -76,14 +76,24 @@ class Engine:
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
         self.session = aiohttp.ClientSession()
-        self.feed = BybitPublicFeed(self.store, self.session)
-        self.context = ContextFeed(self.store, self.session)
+        if self.s.venue == "alpaca":
+            from .broker.alpaca import AlpacaPaper
+            from .market.alpaca import AlpacaFeed
+            from .research import AlpacaContext
+            self.alpaca = AlpacaPaper(self.session)
+            self.feed = AlpacaFeed(self.store, self.alpaca)
+            self.context = AlpacaContext(self.store, self.alpaca)
+        else:
+            self.feed = BybitPublicFeed(self.store, self.session)
+            self.context = ContextFeed(self.store, self.session)
         self.kairos = self._model_client()  # the active classification model (attribute name kept for history)
-        self.labeler = Labeler(self.db, self.session, self.emit)
+        self.labeler = Labeler(self.db, self.session, self.emit, fetcher=getattr(self.feed, "fetch_1m", None))
         self._build_members()
         self.feed.on_bar_close.append(self.on_bar_close)
-        self.testnet_stream = TestnetTickerStream(self.store, self.session, self.s.symbols)
-        self.testnet_stream.on_tick.append(self._on_testnet_tick)
+        self.testnet_stream = None
+        if self.s.venue != "alpaca":
+            self.testnet_stream = TestnetTickerStream(self.store, self.session, self.s.symbols)
+            self.testnet_stream.on_tick.append(self._on_testnet_tick)
         self.context.on_news.append(self.on_news)
         # the hourly budget must survive restarts, so seed it from what was actually sent
         hour_ago = time.time() - 3600
@@ -97,11 +107,12 @@ class Engine:
         except Exception as exc:  # noqa: BLE001
             self.db.event("error", "calibration", f"calibration refit failed: {exc}")
         await self.feed.warmup()
-        if self.s.bybit_api_key and self.s.bybit_api_secret:
+        if ((self.s.venue == "alpaca" and self.alpaca.configured)
+                or (self.s.venue != "alpaca" and self.s.bybit_api_key and self.s.bybit_api_secret)):
             await self._start_executor()
         self.tasks = [
-            asyncio.create_task(self.feed.ws_loop(), name="ws"),
-            asyncio.create_task(self.testnet_stream.run(), name="testnet_ws"),
+            *([] if self.s.venue == "alpaca" else [asyncio.create_task(self.feed.ws_loop(), name="ws"),
+                                                    asyncio.create_task(self.testnet_stream.run(), name="testnet_ws")]),
             asyncio.create_task(self.feed.poll_loop(), name="poll"),
             asyncio.create_task(self.context.loop(), name="context"),
             asyncio.create_task(self.labeler.loop(), name="labeler"),
@@ -114,6 +125,21 @@ class Engine:
                                          f"trading={'on' if self.s.trading_enabled else 'observe-only'}")
 
     async def _start_executor(self) -> None:
+        if self.s.venue == "alpaca":
+            from .broker.alpaca_executor import AlpacaExecutor
+            if getattr(self, "_reconcile_task", None):
+                self._reconcile_task.cancel()
+            self.executor = AlpacaExecutor(self.s, self.db, self.alpaca, self.emit, self.feed)
+            try:
+                await self.executor.start()
+                for sym, inst in self.executor.instruments.items():
+                    self.store[sym].instrument = inst
+            except Exception as exc:
+                self.executor.sync_error = str(exc)
+            self.executor.run_id_fn = lambda: self.run["id"]
+            self.executor.corr_fn = self.models.corr_with
+            self._reconcile_task = asyncio.create_task(self.executor.reconcile_loop(), name="alpaca_reconcile")
+            return
         self.executor = Executor(self.s, self.db, BybitTestnet(self.s.bybit_api_key, self.s.bybit_api_secret, self.session), self.emit)
         try:
             await self.executor.start()
@@ -140,6 +166,20 @@ class Engine:
         self._private_task = asyncio.create_task(self._private_stream.run(), name="private_ws")
 
     # ------------------------------------------------------------------ keys (set from the dashboard)
+    async def set_alpaca_keys(self, api_key: str, api_secret: str) -> dict[str, Any]:
+        from .broker.alpaca import AlpacaPaper
+        if self.s.venue != "alpaca":
+            raise ValueError("this service is not configured for Alpaca")
+        if self.db.one("SELECT id FROM trades WHERE status IN ('open','opening','closing') LIMIT 1"):
+            raise ValueError("close harness trades before changing accounts")
+        account = await AlpacaPaper(self.session, key=api_key, secret=api_secret).account()
+        save_env({"APCA_API_KEY_ID": api_key, "APCA_API_SECRET_KEY": api_secret,
+                  "CTB_ALPACA_ACCOUNT_ID": account["id"], "CTB_TRADING_ENABLED": "0"})
+        self.s.alpaca_account_id, self.s.trading_enabled = account["id"], False
+        await self.feed.warmup()
+        await self._start_executor()
+        return {"ok": True, "account_id": account["id"], "equity": float(account["equity"]), "paper": True}
+
     async def set_bybit_keys(self, api_key: str, api_secret: str) -> dict[str, Any]:
         """Validate testnet keys against the account, then persist and hot-swap the executor."""
         if self.db.one("SELECT id FROM trades WHERE status IN ('open','opening') LIMIT 1"):
@@ -273,7 +313,8 @@ class Engine:
 
     async def stop(self) -> None:
         self.feed.stop()
-        self.testnet_stream.stop()
+        if self.testnet_stream:
+            self.testnet_stream.stop()
         self.context.stop()
         if getattr(self, "_reconcile_task", None):
             self._reconcile_task.cancel()
@@ -293,7 +334,7 @@ class Engine:
             for sym in self.s.symbols:
                 try:
                     pos = self.executor.position_summary(sym) if self.executor else None
-                    built = build_state(self.store, sym, self.s, position=pos, models=self.models, costs=self.costs.outcome_costs())
+                    built = build_state(self.store, sym, self.s, position=pos, models=self.models, costs=self.costs.outcome_costs(symbol=sym))
                     if built:
                         self.latest_state[sym] = {"state": built[0], "meta": built[1], "ts": time.time()}
                 except Exception as exc:  # noqa: BLE001
@@ -363,18 +404,28 @@ class Engine:
             return None
         if not self.kairos.configured:
             return None
+        if self.s.venue == "alpaca":
+            ready, reason = self.feed.decision_ready(symbol)
+            if not ready:
+                self.db.event("info", "decision_paused", reason, symbol)
+                return None
         if not self.budget.try_take():
             self.emit("event", self.db.event("warn", "budget", f"model hourly budget ({self.s.kairos_max_requests_per_hour}) exhausted; skipped {symbol}", symbol))
             return None
         self.inflight.add(symbol)
         try:
             pos = self.executor.position_summary(symbol) if self.executor else None
-            costs = self.costs.outcome_costs()
+            costs = self.costs.outcome_costs(symbol=symbol)
             built = build_state(self.store, symbol, self.s, position=pos, models=self.models, costs=costs)
             if not built:
                 self.db.event("warn", "state", "not enough data to build state", symbol)
                 return None
             state, meta = built
+            if self.s.venue == "alpaca" and "/" not in symbol:
+                from .broker.alpaca import timestamp
+                if time.time() + meta["horizon_min"] * 60 > timestamp(self.feed.clock.get("next_close")):
+                    self.db.event("info", "decision_paused", "forecast horizon extends beyond the market close", symbol)
+                    return None
             if meta.get("testnet_price"):
                 meta["venue_divergence_bp"] = round(10000 * (meta["testnet_price"] / meta["price"] - 1), 1)
             meta["planned_notional"] = self._planned_notional(meta["sl_bp"], meta["price"])

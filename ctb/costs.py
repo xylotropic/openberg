@@ -51,8 +51,19 @@ class CostModel:
         self.refreshed_at = time.time()
         return self.measured
 
-    def outcome_costs(self, entry_mode: str | None = None) -> dict[str, Any]:
+    def outcome_costs(self, entry_mode: str | None = None, *, symbol: str | None = None) -> dict[str, Any]:
         s = self.s
+        if s.venue == "alpaca" and symbol:
+            crypto = "/" in symbol
+            # Conservative tier-1 spot fees; paper fills and forecast cost assumptions are separate.
+            maker, taker = (15.0, 25.0) if crypto else (0.0, 0.0)
+            mode = entry_mode or s.entry_mode
+            entry = taker + (0 if mode == "maker" else s.slippage_bp)
+            return {"entry_mode": mode, "entry_bp": entry, "target_bp": entry + taker + s.time_exit_slip_bp,
+                    "stop_bp": entry + taker + s.stop_slip_bp, "time_bp": entry + taker + s.time_exit_slip_bp,
+                    "reference_bp": entry + taker + s.stop_slip_bp, "maker_fill_rate": None,
+                    "source": {"fees": "Alpaca tier-1 taker assumption (post-only is unavailable)" if crypto else "commission-free equities; regulatory fees excluded",
+                               "entry_slip": "default", "stop_slip": "default"}}
         m = self.refresh()
         mode = entry_mode or s.entry_mode
         entry_slip = m.get("entry_slip_bp")

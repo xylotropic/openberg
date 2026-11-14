@@ -1,3 +1,45 @@
+# Local Alpaca + Drex edition
+
+This checkout runs at **http://127.0.0.1:8800** with **Drex Max Finance** and a dedicated **Alpaca paper account**. It was imported from upstream commit `d9a3a62d1e64bfd28514e07ce6d300ec44654ddb`; no pre-existing local deployment was replaced.
+
+- **Stocks/ETFs:** Alpaca IEX historical bars and quotes. Forecasts and new orders pause outside regular US trading hours; forecast windows cannot extend beyond the market close. Overnight gaps are excluded from historical base-rate windows.
+- **Crypto:** Alpaca US spot data and paper orders, long only. Broker-credited crypto quantity accounts for fees deducted in the purchased asset. Broker stop-limit backstops and managed targets/time exits protect harness positions.
+- **Options (F7):** Indicative free option chains, greeks, calls and puts. Explicitly reviewed long-option paper limit orders use whole contracts and the full premium as the risk budget. Automatic option entries are disabled with indicative data. Scheduled exits occur before the session closes to avoid holding into exercise.
+- **Newsroom (F4):** Alpaca news adapter with symbol filters, source links, publication times and pagination. No paid subscription is enabled.
+- **Filings (F8):** Direct free SEC EDGAR adapter. Every SEC form type is retained. Current and older issuer manifests are paginated, with original documents, filing indexes/exhibits, daily market-wide indexes and the public full-submissions dataset linked. This is on-demand EDGAR access, not a claim that the entire market archive has been downloaded.
+- **Typography:** Avenir 85 Heavy for headings/controls, installed locally by macOS. Bergoom for data, tables and chart labels, bundled with its SIL OFL license. Black, orange, blue, green and red terminal palette.
+
+Trading API calls are pinned in code to `https://paper-api.alpaca.markets`. The configured paper account ID is verified on each account sync. Only recorded harness orders/positions are managed; foreign positions and orders are preserved, including by the kill switch. Auto-trading starts **off**. Model requests remain subject to the hourly budget.
+
+Alpaca crypto fees can be posted to the activity ledger later. Until per-trade USD fees are reported, trade results are labeled **gross fill P&L**, while account equity and daily change come from Alpaca. Resting limit entries cannot guarantee maker execution; forecast costs conservatively assume tier-1 taker fees.
+
+## Run this checkout
+
+```sh
+.venv/bin/python -m ctb.server
+# Or keep it running as a macOS user service:
+.venv/bin/python scripts/service.py install
+.venv/bin/python scripts/service.py status
+.venv/bin/python scripts/service.py stop
+```
+
+Secrets belong in the gitignored, owner-only `.env`: `NACE_API_KEY`, `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`. Set `CTB_VENUE=alpaca`, `CTB_MODEL_PROVIDER=drex`, `CTB_DREX_MODEL=drex-max-finance`, and `SEC_USER_AGENT` to the app name plus a contact email. `CTB_ALPACA_ACCOUNT_ID` pins the verified paper account. Use a separate `CTB_DB_PATH` for a different account or venue.
+
+## Verify
+
+```sh
+.venv/bin/python -m pytest -q tests
+cd web-next && npm ci && npm run build && cd ..
+.venv/bin/python scripts/alpaca_smoke.py           # read-only
+.venv/bin/python scripts/alpaca_smoke.py --execute # <= $20 paper crypto entry -> backstop -> close
+```
+
+The smoke test uses its own database, refuses an existing BTC position/order and verifies that no position/order remains. Local verification records and service logs are in gitignored `data/`. Broker and model credentials are never printed or sent back to the terminal browser.
+
+The upstream documentation below describes the original Bybit implementation, which remains available as a separate legacy venue. This edition's active Alpaca behavior is described above.
+
+---
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/brand/calibrain-harness-logo-dark.svg">

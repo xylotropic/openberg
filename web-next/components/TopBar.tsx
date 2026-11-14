@@ -65,11 +65,11 @@ export function CommandBar() {
     if (input.current) input.current.value = "";
     if (!raw) return;
     const syms: string[] = ov?.settings.symbols || [];
-    const sym = syms.find((s) => s === raw || s === raw + "USDT");
+    const sym = syms.find((s) => s === raw || s === raw + "USDT" || s === raw + "/USD");
     const tfm = ({ "1M": "1", "5M": "5", "15M": "15", "1H": "60", "4H": "240" } as Record<string, string>)[raw];
     const pc = raw.match(/^(?:POS|MAXPOS)\s+(\d+)$/);
     const ttf = raw.match(/^(?:TF|TRADE)\s+(1M|5M|15M|1H)$/);
-    const views: Record<string, any> = { MON: "mon", EVAL: "eval", VALID: "valid", VAL: "valid", TRD: "trades", TRADES: "trades", NEWS: "news", N: "news", LOG: "log" };
+    const views: Record<string, any> = { MON: "mon", EVAL: "eval", VALID: "valid", VAL: "valid", TRD: "trades", TRADES: "trades", NEWS: "news", N: "news", LOG: "log", OPT: "options", OPTIONS: "options", FILINGS: "filings", SEC: "filings" };
     if (pc) return setPosCap(Number(pc[1]));
     if (ttf) return setState({ modal: { kind: "tf", data: ({ "1M": "1", "5M": "5", "15M": "15", "1H": "60" } as any)[ttf[1]] } });
     if (sym) return selectSymbol(sym);
@@ -84,7 +84,7 @@ export function CommandBar() {
   };
 
   const onTrading = async (on: boolean) => {
-    if (on && !confirm(`Enable AUTO-TRADE: the bot will place orders on your Bybit TESTNET account when ${ov?.kairos?.label || "model"} signals pass all gates.`)) return;
+    if (on && !confirm(`Enable AUTO-TRADE: the bot will place orders on your Alpaca PAPER account when ${ov?.kairos?.label || "model"} signals pass all gates.`)) return;
     try {
       await post("/api/trading", { enabled: on });
     } catch (err: any) {
@@ -99,7 +99,7 @@ export function CommandBar() {
     loadOverview();
   };
   const onKill = async () => {
-    if (confirm("KILL: close all bot positions on testnet, cancel orders and stop auto-trade?")) {
+    if (confirm("KILL: close harness-owned Alpaca paper positions, cancel its orders and stop auto-trade?")) {
       await post("/api/kill");
       loadOverview();
     }
@@ -113,7 +113,7 @@ export function CommandBar() {
         <span className="brand-tag">BETA</span>
       </div>
       <form className="cmd" autoComplete="off" onSubmit={onSubmit}>
-        <span className="cmd-sec">{symbol ?? "—"} PERP</span>
+        <span className="cmd-sec">{symbol ?? "—"}</span>
         <input id="cmd" ref={input} spellCheck={false} placeholder={hint ?? PLACEHOLDER} />
         <button className="go" type="submit">GO</button>
       </form>
@@ -122,7 +122,7 @@ export function CommandBar() {
           <input type="checkbox" checked={!!ov?.settings.exploration_mode} onChange={(e) => onExplore(e.target.checked)} />
           <span className="arm-box" /><span>EXPLORE</span>
         </label>
-        <label className="arm" data-tip="Allow the bot to place orders on your Bybit testnet account">
+        <label className="arm" data-tip="Allow the bot to place orders on the dedicated Alpaca paper account">
           <input type="checkbox" checked={!!ov?.settings.trading_enabled} onChange={(e) => onTrading(e.target.checked)} />
           <span className="arm-box" /><span>AUTO-TRADE</span>
         </label>
@@ -136,7 +136,7 @@ export function CommandBar() {
 export async function ask(probe: boolean) {
   const sym = getState().symbol;
   if (!sym) return;
-  setState({ cmdHint: `ASKING KAIROS · ${sym}${probe ? " + probes" : ""}…` });
+  setState({ cmdHint: `ASKING ${getState().ov?.kairos?.label || "MODEL"} · ${sym}${probe ? " + probes" : ""}…` });
   try {
     await post("/api/decide", { symbol: sym, probe });
   } catch (e: any) {
@@ -162,7 +162,7 @@ export async function setPosCap(v?: number) {
   }
 }
 
-const VIEWS = [["mon", "F1", "MON"], ["eval", "F2", "EVAL"], ["valid", "F6", "VALID"], ["trades", "F3", "TRADES"], ["news", "F4", "NEWS"], ["log", "F5", "LOG"]] as const;
+const VIEWS = [["mon", "F1", "MON"], ["eval", "F2", "EVAL"], ["valid", "F6", "VALID"], ["trades", "F3", "TRADES"], ["news", "F4", "NEWSROOM"], ["log", "F5", "LOG"], ["options", "F7", "OPTIONS"], ["filings", "F8", "FILINGS"]] as const;
 
 export function FKeys() {
   const view = useStore((s) => s.view);
@@ -188,7 +188,7 @@ export function FKeys() {
       {st && <ModelSwitch />}
       {st && <button className="kbtn stratbtn" onClick={() => setState({ modal: { kind: "strategy" } })}
         data-tip="Brackets, entries, mirror averaging, trade trigger, filters, sizing, drift action">STRATEGY</button>}
-      <span className="venue">VENUE <b>BYBIT TESTNET</b> · SIGNALS <b>BYBIT MAINNET</b> · MODEL <b>{String(st?.model_id || "—").toUpperCase()}</b></span>
+      <span className="venue">VENUE <b>{st?.venue_label || "ALPACA PAPER"}</b> · DATA <b>IEX + CRYPTO</b> · MODEL <b>{String(st?.model_id || "—").toUpperCase()}</b></span>
     </nav>
   );
 }
@@ -231,10 +231,12 @@ export function Alerts() {
   const sock = useStore((s) => s.socket.connected);
   if (!ov) return null;
   const a: React.ReactNode[] = [];
-  if (!ov.kairos.configured) a.push(<div key="k" className="alert"><b>{String(ov.kairos.label || "MODEL").toUpperCase()} KEY NOT SET.</b> Market data is live; no decisions are made. <a href="#" onClick={(e) => { e.preventDefault(); setState({ modal: { kind: "keys" } }); }}>Add key ›</a></div>);
+  const regionBlocked = ov.data.errors.some((e: any) => String(e.error).includes("blocks API access from this country"));
+  if (regionBlocked) a.push(<div key="region" className="alert crit"><b>BYBIT UNAVAILABLE IN THIS COUNTRY.</b> Live market data and testnet execution are disconnected. Decisions remain paused until market data is available.</div>);
+  if (!ov.kairos.configured) a.push(<div key="k" className="alert"><b>{String(ov.kairos.label || "MODEL").toUpperCase()} KEY NOT SET.</b> No decisions are made until the model key and market data are ready. <a href="#" onClick={(e) => { e.preventDefault(); setState({ modal: { kind: "keys" } }); }}>Add key ›</a></div>);
   if (ov.kairos.last_error) a.push(<div key="ke" className="alert crit"><b>{String(ov.kairos.label || "MODEL").toUpperCase()} ERROR</b> {ov.kairos.last_error}</div>);
   if (ov.account?.halted_reason) a.push(<div key="h" className="alert crit"><b>TRADING HALTED</b> {ov.account.halted_reason}</div>);
-  if (ov.executor_error) a.push(<div key="x" className="alert crit"><b>TESTNET</b> {ov.executor_error}</div>);
+  if (ov.executor_error) a.push(<div key="x" className="alert crit"><b>ALPACA PAPER</b> {ov.executor_error}</div>);
   if (!sock) a.push(<div key="s" className="alert"><b>LIVE STREAM RECONNECTING.</b> Prices and the account update again as soon as the socket is back.</div>);
   return <div>{a}</div>;
 }
@@ -255,18 +257,18 @@ export function StatusLine() {
   const stale = sock.lastMsg ? (now - sock.lastMsg) / 1000 : null;
   return (
     <footer className="statusline">
-      <span><Dot c={d.ws_connected ? "ok" : "bad"} />BYBIT <b>{d.ws_connected ? "LIVE" : "DOWN"}</b> {Number(d.ws_messages).toLocaleString()} msgs</span>
+      <span><Dot c={d.ws_connected ? "ok" : "bad"} />ALPACA <b>{d.ws_connected ? "LIVE" : "DOWN"}</b> {Number(d.ws_messages).toLocaleString()} msgs</span>
       <span data-tip="Browser ⇄ terminal WebSocket. Latency = server push time to screen.">
         <Dot c={sock.connected && stale !== null && stale < 3 ? "ok" : sock.connected ? "warn" : "bad"} />UI SOCKET <b>{sock.connected ? "LIVE" : "DOWN"}</b>
         {sock.latencyMs !== null && <> · <b>{sock.latencyMs.toFixed(0)}</b> ms</>}
       </span>
       <span><Dot c={!k.configured ? "warn" : k.last_error ? "bad" : "ok"} />{String(k.label || "MODEL").toUpperCase()} <b>{k.configured ? (k.last_error ? "ERROR" : "READY") : "NO KEY"}</b> {k.requests_last_hour}/{k.budget_per_hour} req/h</span>
-      <span><Dot c={ov.executor_error ? "bad" : a?.private_stream ? "ok" : "warn"} />TESTNET <b>{ov.executor_error ? "OFFLINE" : a?.private_stream ? "STREAMING" : "POLLING"}</b>{a?.last_sync ? ` · sync ${age(now / 1000 - a.last_sync)}` : ""}</span>
+      <span><Dot c={ov.executor_error ? "bad" : a?.private_stream ? "ok" : "warn"} />PAPER <b>{ov.executor_error ? "OFFLINE" : a?.private_stream ? "STREAMING" : "POLLING"}</b>{a?.last_sync ? ` · sync ${age(now / 1000 - a.last_sync)}` : ""}</span>
       {ov.run && <span data-tip={ov.run.name}>RUN <b className="amb">{ov.run.id}</b></span>}
       <span>MODE <b className={a?.trading_enabled ? "up" : ""}>{a?.trading_enabled ? "AUTO-TRADE" : "OBSERVE"}</b>{st.exploration_mode && <b className="amb"> · EXPLORE</b>}</span>
       <span>TRADE TF <b className="amb">{st.tf_profiles[st.decision_tf]?.label || st.decision_tf}</b> · HOLD ≤ <b>{st.horizon_minutes}m</b></span>
       <span>LABELLED <b>{ov.labelled_total}</b></span>
-      <span>{short(symbol || "")} FUNDING IN <b>{fundTxt}</b></span>
+      <span>{symbol?.includes("/") ? "CRYPTO SPOT · 24/7" : "STOCKS · IEX"}</span>
       <span style={{ marginLeft: "auto" }} suppressHydrationWarning>UTC <b>{new Date(now).toISOString().slice(11, 19)}</b></span>
     </footer>
   );

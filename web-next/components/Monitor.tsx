@@ -16,9 +16,9 @@ export function MonitorView({ hidden }: { hidden: boolean }) {
     <main className="view on" style={hidden ? { display: "none" } : undefined}>
       <div className="grid-mon">
         <section className="pnl a-mon">
-          <Ph code="MON" right={<><span className="live"><span className="pulse" />LIVE</span><button className="mini" onClick={() => setState({ modal: { kind: "universe" } })} data-tip="Choose which perps the bot watches and trades (UNIV)">SYMBOLS</button></>}>Perp monitor</Ph>
+          <Ph code="MON" right={<><span className="live"><span className="pulse" />LIVE</span><button className="mini" onClick={() => setState({ modal: { kind: "universe" } })} data-tip="Choose which symbols the bot watches and trades (UNIV)">SYMBOLS</button></>}>Market monitor</Ph>
           <div className="pb tight scroll watch-scroll"><Watchlist /></div>
-          <div className="ph sub"><span className="code">WEI</span>Cross-asset<span className="ph-r">Yahoo · alternative.me</span></div>
+          <div className="ph sub"><span className="code">WEI</span>Cross-asset<span className="ph-r">Alpaca · market status</span></div>
           <div className="pb tight"><Macro /></div>
         </section>
         <section className="pnl a-chart">
@@ -35,16 +35,16 @@ export function MonitorView({ hidden }: { hidden: boolean }) {
           <PerfChart />
         </section>
         <section className="pnl a-map">
-          <Ph code="IMAP" right="size ∝ √turnover · top 40">Perp market map · 24h %</Ph>
+          <Ph code="IMAP" right="size ∝ √turnover">Market map · change %</Ph>
           <MarketMap visible={!hidden} />
         </section>
         <section className="pnl a-book"><BookPanel /></section>
         <section className="pnl a-news">
-          <Ph code="TOP" right="CoinDesk · Cointelegraph · Decrypt">News</Ph>
+          <Ph code="TOP" right="Alpaca news plugin">News</Ph>
           <div className="pb tight scroll"><NewsMini /></div>
         </section>
-        <section className="pnl a-tape"><Tape /></section>
-        <section className="pnl a-stats"><Stats /></section>
+        <section className="pnl a-tape"><Capabilities /></section>
+        <section className="pnl a-stats"><AlpacaSessions /></section>
         <section className="pnl a-log">
           <Ph code="BLTR" right="click a row for the full request / response">Decision blotter · <ModelName /></Ph>
           <div className="pb tight scroll"><Blotter /></div>
@@ -85,20 +85,20 @@ function Watchlist() {
   if (!mon) return <div className="empty">Loading…</div>;
   return (
     <table className="t">
-      <thead><tr><th>Sym</th><th className="r">Last</th><th className="r">24h</th><th>24h·15m</th><th className="r">Fund%</th><th className="r">KRS</th></tr></thead>
+      <thead><tr><th>Sym</th><th className="r">Last</th><th className="r">24h</th><th>24h·15m</th><th>Feed</th><th className="r">KRS</th></tr></thead>
       <tbody>
         {mon.rows.map((r: any) => {
           const t = ticks[r.symbol];
           const last = t?.last ?? r.last, pct = t?.pct24h ?? r.pct24h;
           const d = latest[r.symbol];
-          const tip = `${r.symbol}\nmark ${px(t?.mark ?? r.mark)} · index ${px(r.index)}\n24h H ${px(r.high24h)} L ${px(r.low24h)}\nturnover $${usd(r.turnover24h)} · OI $${usd(r.oi_value)}\ntestnet ${px(t?.testnet_last ?? r.testnet_last)} (${sg(r.divergence_bp, 1)} bp)`;
+          const tip = `${r.symbol}\nAlpaca ${r.symbol.includes("/") ? "US crypto" : "IEX"}\nQuote age ${age(r.age_s)}\nDaily turnover $${usd(r.turnover24h)}`;
           return (
             <tr key={r.symbol} className={`click ${r.symbol === symbol ? "sel" : ""}`} onClick={() => selectSymbol(r.symbol)} data-tip={tip}>
               <td className="sym">{short(r.symbol)}</td>
               <LastCell value={last} />
               <td className={`r ${ud(pct)}`}>{sg(pct, 2, "%")}</td>
               <td>{spark(r.spark)}</td>
-              <td className={`r ${ud(r.funding)}`}>{sg(isNum(r.funding) ? r.funding * 100 : null, 4)}</td>
+              <td className="muted">{r.symbol.includes("/") ? "CRYPTO" : "IEX"}</td>
               <td className="r">
                 {!d ? <span className="tag flat">—</span> : d.error_kind ? <span className="tag err" data-tip={d.error_kind}>ERR</span> : (
                   <span className={`tag ${d.action}`} data-tip={`${d.action}${d.exploration ? " (explore)" : ""} · ${age(Date.now() / 1000 - d.ts)} ago\nEV long ${sg(d.ev_long_r, 3)}R · short ${sg(d.ev_short_r, 3)}R`}>{(d.action || "").toUpperCase()}</span>
@@ -116,6 +116,8 @@ function Macro() {
   const mon = useStore((s) => s.mon);
   const names: Record<string, string> = { SPX_fut: "S&P 500 FUT", NDX_fut: "NASDAQ 100 FUT", DXY: "DOLLAR INDEX", Gold: "GOLD FUT", US10Y: "US 10Y YIELD", VIX: "VIX" };
   const fg = mon?.fear_greed;
+  const clock = useStore(s => s.ov?.account?.market_clock);
+  if (!Object.keys(mon?.macro || {}).length) return <div className="market-capabilities"><div>US stocks/options <b className={clock?.is_open ? "up" : "amb"}>{clock?.is_open ? "OPEN" : "CLOSED"}</b></div><div>Crypto <b className="up">24/7</b></div><span>Stock prices shown are IEX; closed-session quotes can be stale.</span></div>;
   return (
     <table className="t">
       <thead><tr><th>Instrument</th><th className="r">Last</th><th className="r">8h chg</th></tr></thead>
@@ -148,9 +150,7 @@ function ChartHeader() {
         {Object.entries(TFL).map(([k, l]) => <button key={k} className={k === tf ? "on" : ""} onClick={() => selectTf(k)}>{l}</button>)}
       </span>
       <span className="legend"><i style={{ ["--c" as any]: "var(--amber)" }} />EMA20 <i style={{ ["--c" as any]: "var(--s1)" }} />EMA50 <i className="tri" /><ModelName /></span>
-      <span className="ph-r">
-        {tn && <>TESTNET {px(tn)} <span className={div !== null && Math.abs(div) > maxDiv ? "dn" : ""} data-tip="Testnet last vs mainnet last. Entries and brackets use the testnet book.">{sg(div, 1)}bp</span></>}
-      </span>
+      <span className="ph-r">ALPACA · {mkt?.ticker?.dataFeed || "—"}</span>
     </div>
   );
 }
@@ -255,23 +255,23 @@ function Account() {
   const now = useNow();
   const a = ov?.account, w = a?.wallet || {};
   const closePos = async (sym: string) => {
-    if (confirm(`Market-close ${sym} on testnet (reduce-only)?`)) {
+    if (confirm(`Market-close the harness-owned ${sym} position on Alpaca PAPER?`)) {
       await post("/api/close", { symbol: sym });
       loadOverview();
     }
   };
-  if (!a) return <><Ph code="PRTU">Account · testnet</Ph><div className="empty">{ov?.executor_error || "No testnet keys"}</div></>;
+  if (!a) return <><Ph code="PRTU">Account · Alpaca paper</Ph><div className="empty">{ov?.executor_error || "No Alpaca paper keys"}</div></>;
   const st = ov.settings;
   const cells: [string, React.ReactNode, string][] = [
-    ["Equity", fx(w.equity), "USDT · UTA"], ["Available", fx(w.available), "USDT"],
-    ["Unrealised", <span key="u" className={ud(w.unrealized_pnl)}>{sg(w.unrealized_pnl)}</span>, "USDT"],
+    ["Equity", fx(w.equity), "USD · paper"], ["Available", fx(w.available), "USD"],
+    ["Unrealised", <span key="u" className={ud(w.unrealized_pnl)}>{sg(w.unrealized_pnl)}</span>, "USD"],
     ["Today PnL", <span key="d" className={ud(a.daily_pnl)}>{sg(a.daily_pnl)}</span>, `halts at −${st.daily_loss_limit_pct}%`],
     ["Positions", <span key="p">{a.positions.length}/{st.max_positions} <button className="mini" onClick={() => setPosCap()} data-tip="Change the max number of open positions. Applies to new entries only.">CAP</button></span>, `${a.open_orders} open orders`],
     ["Risk / trade", `${st.exploration_mode ? Math.min(st.explore_risk_pct, st.risk_per_trade_pct) : st.risk_per_trade_pct}%`, `entry cap ${st.max_entry_slip_bp}bp · ≤${st.max_leverage}x`],
   ];
   return (
     <>
-      <Ph code="PRTU" right={a.last_sync ? `${a.private_stream ? "stream" : "poll"} · sync ${age(now / 1000 - a.last_sync)} ago` : ""}>Account · testnet</Ph>
+      <Ph code="PRTU" right={a.last_sync ? `${a.private_stream ? "stream" : "poll"} · sync ${age(now / 1000 - a.last_sync)} ago` : ""}>Account · Alpaca paper</Ph>
       <div className="pb tight" style={{ flex: "none" }}>
         <div className="acct-grid">{cells.map(([l, n, s]) => <div className="cell" key={l}><div className="l">{l}</div><div className="n">{n}</div><div className="s">{s}</div></div>)}</div>
       </div>
@@ -286,7 +286,7 @@ function Account() {
                   <td className="sym">{short(x.symbol)}</td><td><span className={`tag ${x.side}`}>{x.side.toUpperCase()}</span></td>
                   <td className="r">{x.size}</td><td className="r">{x.entry}</td><td className="r">{x.mark}</td>
                   <td className={`r ${ud(x.upnl)}`}>{sg(x.upnl)}</td><td className="r">{x.sl || <span className="dn">NONE</span>}</td><td className="r">{x.tp || "—"}</td>
-                  <td><button className="mini" onClick={() => closePos(x.symbol)}>CLOSE</button></td>
+                  <td>{x.owned ? <button className="mini" onClick={() => closePos(x.symbol)}>CLOSE</button> : <span className="muted">EXTERNAL</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -410,7 +410,7 @@ function BookPanel() {
   const now = useNow(500);
   const b = book && book.symbol === symbol ? book : mkt?.symbol === symbol ? mkt?.book : null;
   const d = Math.max(String(mkt?.ticker?.lastPrice ?? "").split(".")[1]?.length || 0, 0);
-  const head = <Ph code="DOM" right={book?.ts ? `push ${age((now - book.ts) / 1000)} ago` : ""}>Order book · mainnet</Ph>;
+  const head = <Ph code="DOM" right={book?.ts ? `push ${age((now - book.ts) / 1000)} ago` : ""}>Top of book · Alpaca</Ph>;
   if (!b?.bids?.length || !b?.asks?.length) return <>{head}<div className="empty">Book loading…</div></>;
   const bids = b.bids as [number, number][], asks = b.asks as [number, number][];
   const bb = bids[0][0], ba = asks[0][0], mid = (bb + ba) / 2, spr = (10000 * (ba - bb)) / mid;
@@ -607,3 +607,26 @@ function Blotter() {
 }
 
 export { cssVar };
+
+function Capabilities() {
+  return <><Ph code="FEED">Data coverage</Ph><div className="market-capabilities">
+    <div className="amb">ALPACA PAPER + DREX FINANCE</div>
+    <div>Stocks <span>IEX quotes and historical bars</span></div><div>Crypto <span>Alpaca US spot · 24/7 · long only</span></div>
+    <div>Options <span>Indicative chain · paper long calls/puts</span></div><div>Newsroom <span>Alpaca news · source links retained</span></div>
+    <div>Filings <span>SEC EDGAR · every form type + archives</span></div>
+    <div className="muted">Full depth, aggressor flow, funding and liquidation feeds are unavailable on this adapter.</div>
+  </div></>;
+}
+
+function AlpacaSessions() {
+  const ov = useStore(s => s.ov);
+  const clock = ov?.account?.market_clock;
+  return <><Ph code="MKT">Market session & execution</Ph><div className="market-capabilities">
+    <div>US MARKET <b className={clock?.is_open ? "up" : "amb"}>{clock?.is_open ? "OPEN" : "CLOSED"}</b></div>
+    <div>Next open <span>{clock?.next_open ? new Date(clock.next_open).toLocaleString() : "—"}</span></div>
+    <div>Crypto <b className="up">24/7</b></div><div>Paper only <b className="up">ENFORCED</b></div>
+    <div>Stops <span>Managed exits + broker stop-limit backstop</span></div>
+    <div>Existing positions <span>External positions are preserved</span></div>
+    <div>P&L <span>Broker fills; fee availability is recorded per trade</span></div>
+  </div></>;
+}

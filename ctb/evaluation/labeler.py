@@ -145,10 +145,11 @@ def label_news(n: dict[str, Any], bars: list[tuple]) -> dict[str, Any] | None:
 
 
 class Labeler:
-    def __init__(self, db: DB, session: aiohttp.ClientSession, emit):
+    def __init__(self, db: DB, session: aiohttp.ClientSession, emit, fetcher=None):
         self.db = db
         self.session = session
         self.emit = emit
+        self.fetcher = fetcher or fetch_1m
         self.labeled = 0
 
     async def loop(self) -> None:
@@ -171,7 +172,7 @@ class Labeler:
         for sym, ds in by_sym.items():
             start = int(min(d["ts"] for d in ds) * 1000) - 60000
             end = int(max(d["ts"] + d["horizon_min"] * 60 for d in ds) * 1000) + 120000
-            bars = await fetch_1m(self.session, sym, start, end)
+            bars = await self.fetcher(self.session, sym, start, end)
             for d in ds:
                 lab = label_decision(d, bars)
                 if lab is None:
@@ -185,7 +186,7 @@ class Labeler:
             "(CASE horizon WHEN '15m' THEN 900 WHEN '1h' THEN 3600 ELSE 14400 END) + 180 < ?", (now,))
         for nw in news_pending:
             mins = {"15m": 15, "1h": 60, "4h": 240}[nw["horizon"]]
-            bars = await fetch_1m(self.session, nw["symbol"], int(nw["entry_ts"] * 1000), int(nw["entry_ts"] * 1000) + (mins + 3) * 60000)
+            bars = await self.fetcher(self.session, nw["symbol"], int(nw["entry_ts"] * 1000), int(nw["entry_ts"] * 1000) + (mins + 3) * 60000)
             lab = label_news(nw, bars)
             if lab:
                 self.db.update("news", nw["id"], {"label_json": lab, "labeled_at": now}, key_col="id")

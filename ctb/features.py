@@ -126,7 +126,7 @@ CONDITIONAL_MIN_WINDOWS = 30
 
 
 def base_rates(bars: list, horizon_bars: int, sl_bp: float, tp_bp: float, entries: set[int] | None = None,
-               min_windows: int = BASE_RATE_MIN_WINDOWS) -> dict[str, Any] | None:
+               min_windows: int = BASE_RATE_MIN_WINDOWS, *, interval_ms: int | None = None) -> dict[str, Any] | None:
     """Empirical frequencies of every labelled outcome for THIS bracket and horizon on the
     instrument's own recent history (completed windows only: no look-ahead).
 
@@ -138,6 +138,13 @@ def base_rates(bars: list, horizon_bars: int, sl_bp: float, tp_bp: float, entrie
 
     last = len(bars) - horizon_bars - 1
     idx = [i for i in range(max(0, last - BASE_RATE_MAX_WINDOWS), last) if entries is None or i in entries]
+    if interval_ms is not None:
+        # Equity sessions have overnight/weekend gaps. A two-hour outcome must be two
+        # wall-clock hours, rather than a path crossing into tomorrow's opening gap.
+        bad = [0]
+        for prev, cur in zip(bars, bars[1:]):
+            bad.append(bad[-1] + (cur.t - prev.t != interval_ms))
+        idx = [i for i in idx if bad[i + horizon_bars] == bad[i]]
     n_win = len(idx)
     if n_win < min_windows:
         return None
@@ -273,7 +280,9 @@ def build_state(store: MarketStore, symbol: str, s: Settings, *, position: dict[
 
     day = st.closed_bars("60")[-24:]
     state: dict[str, Any] = {
-        "instrument": f"{symbol} USDT-margined perpetual swap",
+        "instrument": (f"{symbol} Alpaca {'spot crypto' if '/' in symbol else 'US equity'}" if s.venue == "alpaca"
+                       else f"{symbol} USDT-margined perpetual swap"),
+        "data_source": "Alpaca; IEX for US stocks" if s.venue == "alpaca" else "Bybit mainnet",
         "as_of_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "decision_timeframe": TF_LABEL.get(s.decision_tf, s.decision_tf),
         "last_price": price,
@@ -296,6 +305,11 @@ def build_state(store: MarketStore, symbol: str, s: Settings, *, position: dict[
         },
         "order_book": book_block(st),
     }
+    if s.venue == "alpaca":
+        state["market_capabilities"] = {"shortable": st.instrument.get("shortable", False),
+            "spot_only": "/" in symbol, "order_flow": "not supplied by this feed",
+            "derivatives": "not applicable", "order_book": "top-of-book quotes; full depth unavailable"}
+        state["derivatives"] = {key: None for key in state["derivatives"]}
     now_s = time.time()
     fd = st.flow_intensity.features(now_s)
     if fd and cov >= 5:
@@ -356,7 +370,8 @@ def build_state(store: MarketStore, symbol: str, s: Settings, *, position: dict[
     if position:
         state["open_position"] = position
 
-    base = base_rates(dec, horizon_bars, br["sl_bp"], br["tp_bp"])
+    interval_ms = s.decision_tf_minutes * 60000 if s.venue == "alpaca" else None
+    base = base_rates(dec, horizon_bars, br["sl_bp"], br["tp_bp"], interval_ms=interval_ms)
     cond = None
     if models is not None:
         from .analytics import BAR_EVENTS
@@ -364,7 +379,7 @@ def build_state(store: MarketStore, symbol: str, s: Settings, *, position: dict[
         if now_bar_events:
             hist = models.bar_event_history(symbol, s.decision_tf)
             entries = {i for i, b in enumerate(dec) if hist.get(b.t, set()) & now_bar_events}
-            cond = base_rates(dec, horizon_bars, br["sl_bp"], br["tp_bp"], entries, min_windows=CONDITIONAL_MIN_WINDOWS)
+            cond = base_rates(dec, horizon_bars, br["sl_bp"], br["tp_bp"], entries, min_windows=CONDITIONAL_MIN_WINDOWS, interval_ms=interval_ms)
             if cond:
                 cond["given_events"] = sorted(now_bar_events)
     if base:

@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS events (
 
 # Execution-accuracy columns added after the first release (migrated in place).
 TRADE_COLUMNS = {
+    "venue": "TEXT", "account_id": "TEXT", "multiplier": "REAL", "gross_qty": "REAL",
+    "stop_order_id": "TEXT", "exit_link_id": "TEXT", "exit_links_json": "TEXT", "exit_attempt_ts": "REAL",
     "mode": "TEXT",              # strict | exploration
     "requested_qty": "REAL",     # what we asked for; qty is what Bybit actually filled
     "ref_price": "REAL",         # best testnet price at order time
@@ -149,7 +151,7 @@ TRADE_COLUMNS = {
 
 JSON_COLS = {"state_json", "questions_json", "answers_json", "parsed_json", "issues_json", "usage_json",
              "model_meta_json", "decision_json", "label_json", "probs_json", "fills_json", "config_json",
-             "sizing_json", "events_json"}
+             "sizing_json", "events_json", "exit_links_json"}
 
 
 class DB:
