@@ -18,7 +18,8 @@ export type State = {
   perf: Record<string, [number, number][]>;
   symbol: string | null;
   tf: string;
-  view: "mon" | "eval" | "valid" | "trades" | "news" | "log" | "options" | "filings" | "manual";
+  view: "mon" | "eval" | "valid" | "trades" | "news" | "log" | "options" | "filings" | "manual" | "surfaces";
+  surfaceUnderlying: string | null;
   manualDraft: { symbol: string; side?: "buy" | "sell"; qty?: string; limit_price?: string } | null;
   ticks: Record<string, Tick>;
   book: Book | null;
@@ -30,7 +31,7 @@ export type State = {
 
 let state: State = {
   ov: null, mon: null, mkt: null, marketError: null, decisions: [], latest: {}, news: { forecasts: [], headlines: [] }, perf: {},
-  symbol: null, tf: "5", view: "mon", manualDraft: null, ticks: {}, book: null,
+  symbol: null, tf: "5", view: "mon", surfaceUnderlying: null, manualDraft: null, ticks: {}, book: null,
   socket: { connected: false, lastMsg: 0, latencyMs: null, msgs: 0 }, modal: null, cmdHint: null,
   rev: { trades: 0, events: 0, eval: 0 },
 };

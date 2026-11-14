@@ -176,6 +176,12 @@ def make_app(engine: Engine) -> web.Application:
             return await engine.executor.option_entry(str(body.get("symbol", "")).upper(), qty, float(body.get("limit_price", 0)))
         return await research_response(submit)
 
+    @routes.get('/api/options/surface')
+    async def option_surface(req):
+        return await research_response(lambda: research_plugins().option_surface(
+            req.query.get('underlying', 'SPY').upper(), kind=req.query.get('type', 'call'),
+            days=int(req.query.get('days', '90')), band=float(req.query.get('band', '.25'))))
+
     @routes.get("/")
     async def index(_: web.Request) -> web.StreamResponse:
         if (NEXT_OUT / "index.html").exists():
@@ -212,6 +218,11 @@ def make_app(engine: Engine) -> web.Application:
         tf = req.query.get("tf", s.decision_tf)
         if tf not in TIMEFRAMES:
             tf = s.decision_tf
+        if s.venue == 'alpaca' and hasattr(engine, 'feed'):
+            try:
+                await engine.feed.ensure_history(sym, tf)
+            except Exception as exc:
+                return j({'error': f'Chart history unavailable: {exc}'}, 502)
         st = engine.store[sym]
         bars = [b.as_dict() for b in st.bars[tf][-300:]]
         preview = engine.latest_state.get(sym)
@@ -461,7 +472,7 @@ def make_app(engine: Engine) -> web.Application:
         latest = {r["symbol"]: r for r in engine.db.query(
             "SELECT d.symbol, d.ts, d.action, d.error_kind, d.decision_json FROM decisions d "
             "JOIN (SELECT symbol, MAX(id) mid FROM decisions WHERE probe IS NULL GROUP BY symbol) m ON d.id = m.mid")}
-        for sym in s.symbols:
+        for sym in engine.store.symbols:
             st = engine.store[sym]
             t = st.ticker
             c15 = st.closes("15")[-96:]  # 24h of 15m closes
@@ -491,6 +502,33 @@ def make_app(engine: Engine) -> web.Application:
         ctx = engine.store.context
         return j({"rows": rows, "tape": tape[:80], "universe": ctx.get("universe", []), "universe_ts": ctx.get("universe_ts"),
                   "news": ctx.get("news", [])[:40], "macro": ctx.get("macro", {}), "fear_greed": ctx.get("fear_greed"), "server_ts": time.time()})
+
+    @routes.post('/api/watchlist')
+    async def add_watch_symbol(req):
+        async def add():
+            if s.venue != 'alpaca':
+                raise ValueError('The quote watchlist requires Alpaca')
+            body = await req.json()
+            symbol = str(body.get('symbol', '')).strip().upper()
+            if symbol in engine.store.state:
+                return {'symbol': symbol, 'watchlist_symbols': s.watchlist_symbols}
+            if len(engine.store.symbols) >= 500:
+                raise ValueError('The watchlist supports up to 500 symbols')
+            asset = await engine.alpaca.asset(symbol)
+            if not asset.get('tradable'):
+                raise ValueError('This symbol is not tradable on Alpaca')
+            symbol = asset.get('symbol') or symbol
+            from .market.store import SymbolState
+            if symbol not in engine.store.state:
+                engine.store.state[symbol] = SymbolState(symbol)
+                engine.store.symbols.append(symbol)
+                s.watchlist_symbols = list(engine.store.symbols)
+                save_env({'CTB_WATCHLIST': ','.join(s.watchlist_symbols)})
+            engine.feed.watch_symbol(symbol)
+            await engine.feed.refresh_quotes()
+            engine.emit('settings', {})
+            return {'symbol': symbol, 'watchlist_symbols': s.watchlist_symbols}
+        return await research_response(add)
 
     @routes.get("/api/perf")
     async def perf(req: web.Request) -> web.Response:
@@ -696,10 +734,12 @@ def make_app(engine: Engine) -> web.Application:
                     except ValueError:
                         continue
                     if m.get("op") == "watch":
-                        if m.get("symbol") in s.symbols:
+                        if m.get("symbol") in engine.store.state:
                             watch["symbol"] = m["symbol"]
                         if m.get("tf") in TIMEFRAMES:
                             watch["tf"] = m["tf"]
+                        if s.venue == 'alpaca':
+                            engine.feed.watch_symbol(watch['symbol'], watch['tf'])
 
         async def forward_events() -> None:
             while True:
@@ -710,7 +750,7 @@ def make_app(engine: Engine) -> web.Application:
             while True:
                 await asyncio.sleep(PUSH_MS / 1000)
                 ticks = {}
-                for sym in s.symbols:
+                for sym in engine.store.symbols:
                     st = engine.store[sym]
                     t, tn = st.ticker, st.testnet_ticker
                     row = (t.get("lastPrice"), t.get("markPrice"), t.get("bid1Price"), t.get("ask1Price"), tn.get("lastPrice"))

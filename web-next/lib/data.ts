@@ -38,6 +38,13 @@ export async function loadNews() {
   setState({ news: await api("/api/news") });
 }
 
+export function manualQuantity(symbol: string) {
+  if (!symbol.includes('/')) return '1';
+  const s = getState();
+  const price = Number(s.ticks[symbol]?.last || s.mon?.rows.find((r: any) => r.symbol === symbol)?.last);
+  return price > 0 ? String(Math.ceil(25 / price * 1e8) / 1e8) : '';
+}
+
 export function selectSymbol(symbol: string) {
   if (getState().symbol === symbol) return;
   setState({ symbol, mkt: null, book: null, marketError: null });

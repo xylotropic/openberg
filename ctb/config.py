@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from .market.watchlist import DEFAULT_WATCHLIST
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = Path(os.environ.get("CTB_ENV_PATH", str(ROOT / ".env")))
@@ -97,10 +98,11 @@ def _list(name: str, default: str) -> list[str]:
 
 @dataclass
 class Settings:
-    venue: str = os.environ.get("CTB_VENUE", "bybit").strip().lower()
+    venue: str = os.environ.get("CTB_VENUE", "alpaca").strip().lower()
     alpaca_account_id: str = os.environ.get("CTB_ALPACA_ACCOUNT_ID", "")
     # --- markets ---
-    symbols: list[str] = field(default_factory=lambda: _list("CTB_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,DOGEUSDT"))
+    symbols: list[str] = field(default_factory=lambda: _list("CTB_SYMBOLS", "SPY,QQQ,AAPL,NVDA,BTC/USD,ETH/USD,SOL/USD"))
+    watchlist_symbols: list[str] = field(default_factory=lambda: _list('CTB_WATCHLIST', ','.join(DEFAULT_WATCHLIST)))
     decision_tf: str = os.environ.get("CTB_DECISION_TF", "5")  # Bybit interval string, minutes
     horizon_bars: int = _i("CTB_HORIZON_BARS", 24)  # bracket/time-stop horizon, in decision bars
     atr_tf: str = os.environ.get("CTB_ATR_TF", "15")  # timeframe whose ATR sizes the bracket
@@ -250,6 +252,7 @@ class Settings:
             "venue_label": "ALPACA PAPER" if self.venue == "alpaca" else "BYBIT TESTNET",
             "currency": "USD" if self.venue == "alpaca" else "USDT",
             "symbols": self.symbols,
+            "watchlist_symbols": self.watchlist_symbols if self.venue == 'alpaca' else self.symbols,
             "decision_tf": self.decision_tf,
             "tf_profiles": {tf: {**p, "horizon_minutes": p["horizon_bars"] * int(tf), "required_rph": self.required_rph(tf)}
                             for tf, p in TF_PROFILES.items()},

@@ -15,7 +15,7 @@ from .stream import AlpacaStream
 
 
 class AlpacaFeed:
-    def __init__(self, store: MarketStore, client: AlpacaPaper):
+    def __init__(self, store: MarketStore, client: AlpacaPaper, model_symbols=None):
         self.store, self.client = store, client
         self.on_bar_close = []
         self._stop = asyncio.Event()
@@ -27,6 +27,27 @@ class AlpacaFeed:
         self._trade_ts = {}
         self.streams = []
         self._callbacks = set()
+        self.model_symbols = list(model_symbols if model_symbols is not None else store.symbols)
+        self._watched = {}
+        self._history_locks = {}
+
+    def watch_symbol(self, symbol, tf='5'):
+        self._watched[(symbol, tf)] = time.time()
+
+    def subscription(self, kind):
+        recent = [key[0] for key, _ in sorted(self._watched.items(), key=lambda x: x[1], reverse=True)]
+        symbols = list(dict.fromkeys(s for s in [*recent, *self.model_symbols, *self.store.symbols] if asset_class(s) == kind))[:30]
+        channels = {'quotes': symbols, 'trades': symbols, 'bars': symbols}
+        if kind == 'crypto':
+            channels['orderbooks'] = symbols
+        return channels
+
+    async def ensure_history(self, symbol, tf):
+        self.watch_symbol(symbol, tf)
+        lock = self._history_locks.setdefault((symbol, tf), asyncio.Lock())
+        async with lock:
+            if not self.store[symbol].bars[tf]:
+                await self.history(symbol, tf)
 
     def stop(self):
         self._stop.set()
@@ -37,7 +58,7 @@ class AlpacaFeed:
         statuses = self.store.context.setdefault('market_streams', {})
         statuses[kind] = {'state': state, 'error': error, 'changed_at': time.time()}
         self.store.ws_connected = any(s['state'] == 'live' for s in statuses.values())
-        if state != 'live':
+        if state in ('connecting', 'reconnecting', 'stopped'):
             for sym in self.store.symbols:
                 if asset_class(sym) == kind:
                     if self._books.pop(sym, None):
@@ -52,7 +73,7 @@ class AlpacaFeed:
         status = self.store.context.get('market_streams', {}).get(kind, {})
         depth = symbol in self._books
         return {'source': 'Alpaca US' if kind == 'crypto' else 'IEX' if kind == 'us_equity' else 'INDICATIVE',
-                'depth': depth, 'state': status.get('state', 'polling')}
+                'depth': depth, 'state': status.get('state', 'polling') if symbol in self.subscription(kind)['quotes'] else 'polling'}
 
     async def stream_message(self, message):
         sym, kind = message.get('S'), message.get('T')
@@ -145,7 +166,7 @@ class AlpacaFeed:
                 await self.history(sym, tf)
             except Exception as exc:
                 self.store.record_error(f"bars:{sym}:{tf}", str(exc))
-        await asyncio.gather(*(one(sym, tf) for sym in self.store.symbols for tf in TIMEFRAMES))
+        await asyncio.gather(*(one(sym, tf) for sym in self.model_symbols for tf in TIMEFRAMES))
         await self.refresh_quotes()
 
     async def refresh_quotes(self):
@@ -156,7 +177,9 @@ class AlpacaFeed:
             syms = [s for s in self.store.symbols if asset_class(s) == kind]
             if not syms:
                 continue
-            snapshots = await self.client.snapshots(syms, kind)
+            snapshots = {}
+            for offset in range(0, len(syms), 100):
+                snapshots.update(await self.client.snapshots(syms[offset:offset + 100], kind))
             for sym, snap in snapshots.items():
                 if sym not in self.store.state:
                     continue
@@ -194,11 +217,8 @@ class AlpacaFeed:
             symbols = [s for s in self.store.symbols if asset_class(s) == kind]
             if not symbols:
                 continue
-            channels = {'quotes': symbols, 'trades': symbols, 'bars': symbols}
-            if kind == 'crypto':
-                channels['orderbooks'] = symbols
             stream = AlpacaStream(self.client, 'wss://stream.data.alpaca.markets/' + path,
-                                  lambda channels=channels: channels, self.stream_message,
+                                  lambda kind=kind: self.subscription(kind), self.stream_message,
                                   lambda state, error, kind=kind: self.stream_status(kind, state, error))
             self.streams.append(stream)
             tasks.append(asyncio.create_task(stream.run()))
@@ -223,7 +243,9 @@ class AlpacaFeed:
                                 await self.history(sym, tf, recent=True)
                             except Exception as exc:
                                 self.store.record_error(f"bars:{sym}:{tf}", str(exc))
-                        await asyncio.gather(*(refresh(sym, tf) for sym in self.store.symbols for tf in TIMEFRAMES))
+                        targets = {(sym, tf) for sym in self.model_symbols for tf in TIMEFRAMES}
+                        targets.update(key for key, seen in self._watched.items() if time.time() - seen < 600)
+                        await asyncio.gather(*(refresh(sym, tf) for sym, tf in targets))
             except Exception as exc:
                 self.store.record_error("alpaca", str(exc))
             try:

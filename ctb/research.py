@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import math
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 import aiohttp
@@ -123,7 +124,7 @@ class Research:
         async with self.sec_lock:
             await asyncio.sleep(max(0, .25 - (time.monotonic() - self.sec_last)))
             self.sec_last = time.monotonic()
-            ua = os.environ.get('SEC_USER_AGENT', 'Calibrain Harness')
+            ua = os.environ.get('SEC_USER_AGENT', 'Openberg')
             async with self.session.get('https://data.sec.gov/' + path,
                                         headers={'User-Agent': ua, 'Accept-Encoding': 'gzip, deflate'},
                                         timeout=aiohttp.ClientTimeout(total=30)) as r:
@@ -140,7 +141,7 @@ class Research:
         # Official exchange/ticker mapping is hosted on www.sec.gov.
         key = '_ticker_mapping'
         if key not in self.cache or time.time() - self.cache[key][0] > 86400:
-            ua = os.environ.get('SEC_USER_AGENT', 'Calibrain Harness')
+            ua = os.environ.get('SEC_USER_AGENT', 'Openberg')
             async with self.session.get('https://www.sec.gov/files/company_tickers.json', headers={'User-Agent': ua},
                                         timeout=aiohttp.ClientTimeout(total=20)) as r:
                 if r.status != 200:
@@ -211,3 +212,54 @@ class Research:
         return {'underlying': underlying, 'feed': 'indicative', 'items': data.get('snapshots', {}),
                 'next_page_token': data.get('next_page_token'),
                 'notice': 'Free indicative feed: trades are delayed and quotes are modified. Paper limit orders only.'}
+
+    async def option_surface(self, underlying, *, kind='call', days=90, band=.25):
+        if not re.fullmatch(r'[A-Z.]{1,8}', underlying) or kind not in ('call', 'put'):
+            raise ValueError('Choose an equity underlying and calls or puts')
+        if not 7 <= days <= 365 or not .05 <= band <= .75:
+            raise ValueError('Choose 7–365 days and a strike range from 5% to 75%')
+        key = ('surface', underlying, kind, days, band)
+        if key in self.cache and time.time() - self.cache[key][0] < 60:
+            return self.cache[key][1]
+        snapshot = (await self.alpaca.snapshots([underlying], 'us_equity')).get(underlying, {})
+        trade, quote_data = snapshot.get('latestTrade') or {}, snapshot.get('latestQuote') or {}
+        spot = float(trade.get('p') or (snapshot.get('dailyBar') or {}).get('c') or 0)
+        if not math.isfinite(spot) or spot <= 0:
+            raise ValueError('No underlying price is available for this surface')
+        today = datetime.now(timezone.utc).date()
+        params = {'feed': 'indicative', 'limit': 1000, 'type': kind,
+                  'expiration_date_gte': today.isoformat(), 'expiration_date_lte': (today + timedelta(days=days)).isoformat(),
+                  'strike_price_gte': round(spot * (1 - band), 2), 'strike_price_lte': round(spot * (1 + band), 2)}
+        contracts, page = {}, None
+        for _ in range(6):
+            data = await self.alpaca.request('GET', '/v1beta1/options/snapshots/' + underlying,
+                                            data_api=True, params={**params, **({'page_token': page} if page else {})})
+            contracts.update(data.get('snapshots', {}))
+            page = data.get('next_page_token')
+            if not page:
+                break
+        points = []
+        def finite(value):
+            return float(value) if isinstance(value, (float, int)) and math.isfinite(value) else None
+        for symbol, snap in contracts.items():
+            match = re.fullmatch(r'(.+?)(\d{6})([CP])(\d{8})', symbol)
+            if not match or match[3] != ('C' if kind == 'call' else 'P'):
+                continue
+            expiry = datetime.strptime(match[2], '%y%m%d').date()
+            dte, strike = (expiry - today).days, int(match[4]) / 1000
+            if dte < 0 or dte > days or not params['strike_price_gte'] <= strike <= params['strike_price_lte']:
+                continue
+            q, g = snap.get('latestQuote') or {}, snap.get('greeks') or {}
+            bid, ask = finite(q.get('bp')), finite(q.get('ap'))
+            mid = (bid + ask) / 2 if bid is not None and ask is not None and 0 <= bid <= ask and ask > 0 else None
+            iv = finite(snap.get('impliedVolatility'))
+            points.append({'symbol': symbol, 'expiry': expiry.isoformat(), 'dte': dte, 'strike': strike,
+                           'iv': iv if iv is not None and iv > 0 else None, 'bid': bid, 'ask': ask, 'mid': mid,
+                           'quote_ts': timestamp(q.get('t')),
+                           **{name: finite(g.get(name)) for name in ('delta', 'gamma', 'theta', 'vega', 'rho')}})
+        result = {'underlying': underlying, 'kind': kind, 'spot': spot, 'spot_ts': timestamp(trade.get('t') or quote_data.get('t')),
+                  'feed': 'indicative', 'points': sorted(points, key=lambda p: (p['dte'], p['strike'])),
+                  'expiries': sorted({p['expiry'] for p in points}), 'retrieved_at': time.time(),
+                  'truncated': bool(page), 'days': days, 'band': band}
+        self.cache[key] = (time.time(), result)
+        return result

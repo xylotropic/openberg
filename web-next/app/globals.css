@@ -311,6 +311,17 @@ dialog.keys { width: min(640px, 95vw); }
 .order-review { margin: 0 14px 14px; padding: 14px; border: 1px solid var(--amber-dim); display: grid; gap: 8px; }
 .manual-book .pb { overflow: auto; max-height: 480px; }
 .manual-view > .pnl { margin-bottom: 10px; }
+.watch-controls { display: flex; gap: 6px; padding: 5px 6px; position: sticky; top: 0; z-index: 2; background: var(--bar); }
+.watch-controls > input { min-width: 0; width: 45%; }
+.watch-controls form { display: flex; gap: 4px; min-width: 0; flex: 1; }
+.watch-controls form input { min-width: 0; width: 100%; }
+.watch-controls input { background: #000; border: 1px solid var(--line); color: var(--text); padding: 4px; }
+.surface-plot { width: 100%; min-height: 300px; }
+.surface-stamp { padding: 6px 12px; color: var(--muted); font-size: 10px; border-bottom: 1px solid var(--line); }
+.surface-secondary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.surfaces-view .toolbar { flex-wrap: wrap; }
+.surfaces-view .toolbar input { width: 100px; }
+@media (max-width: 760px) { .surface-secondary { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .manual-grid { grid-template-columns: 1fr; } }
 
 /* VALID screen and STRATEGY dialog */

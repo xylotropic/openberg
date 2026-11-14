@@ -43,7 +43,9 @@ class Engine:
     def __init__(self, s: Settings):
         self.s = s
         self.db = DB(s.db_path)
-        self.store = MarketStore(s.symbols)
+        if s.venue == 'alpaca':
+            s.watchlist_symbols = list(dict.fromkeys([*s.symbols, *s.watchlist_symbols]))
+        self.store = MarketStore(s.watchlist_symbols if s.venue == 'alpaca' else s.symbols)
         self.subscribers: set[asyncio.Queue] = set()
         self.session: aiohttp.ClientSession | None = None
         self.executor: Executor | None = None
@@ -81,7 +83,7 @@ class Engine:
             from .market.alpaca import AlpacaFeed
             from .research import AlpacaContext
             self.alpaca = AlpacaPaper(self.session)
-            self.feed = AlpacaFeed(self.store, self.alpaca)
+            self.feed = AlpacaFeed(self.store, self.alpaca, model_symbols=self.s.symbols)
             self.context = AlpacaContext(self.store, self.alpaca, self.emit)
         else:
             self.feed = BybitPublicFeed(self.store, self.session)
@@ -110,6 +112,10 @@ class Engine:
         if ((self.s.venue == "alpaca" and self.alpaca.configured)
                 or (self.s.venue != "alpaca" and self.s.bybit_api_key and self.s.bybit_api_secret)):
             await self._start_executor()
+            if (self.s.venue == 'alpaca' and self.executor and not self.executor.sync_error
+                    and not self.s.alpaca_account_id):
+                self.s.alpaca_account_id = self.executor.account_id
+                save_env({'CTB_ALPACA_ACCOUNT_ID': self.s.alpaca_account_id})
         self.tasks = [
             *([] if self.s.venue == "alpaca" else [asyncio.create_task(self.feed.ws_loop(), name="ws"),
                                                     asyncio.create_task(self.testnet_stream.run(), name="testnet_ws")]),
@@ -343,6 +349,8 @@ class Engine:
 
     # ------------------------------------------------------------------ decisions
     async def on_bar_close(self, symbol: str, tf: str) -> None:
+        if self.s.venue == 'alpaca' and symbol not in self.s.symbols:
+            return
         if tf == "1":
             self.emit("bar", {"symbol": symbol})
         if tf != self.s.decision_tf:
@@ -461,7 +469,8 @@ class Engine:
                 self.db.update("decisions", row["id"], {"decision_json": dj, "action": decision.action})
                 row.update(decision_json=dj, action=decision.action)
                 self.emit("decision", self._decision_view(row))
-                if decision.action in ("long", "short") and self.executor:
+                if (decision.action in ("long", "short") and self.executor
+                        and (self.s.venue != 'alpaca' or symbol in self.s.symbols)):
                     ev = decision.ev_long_r if decision.action == "long" else decision.ev_short_r
                     res = await self.executor.open(symbol=symbol, side=decision.action, sl_bp=meta["sl_bp"], tp_bp=meta["tp_bp"],
                                                    decision_id=row["id"], ev_r=ev or 0.0, exploration=decision.exploration,

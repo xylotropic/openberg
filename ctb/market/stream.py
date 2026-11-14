@@ -26,9 +26,24 @@ class AlpacaStream:
                     self.on_status('connecting', None)
                     async with self.client.session.ws_connect(self.url, headers=self.client.headers, heartbeat=20) as ws:
                         subscribed = False
+                        authenticated = False
                         deadline = time.monotonic() + 15
                         wanted = self.subscription()
                         while not self._stop.is_set():
+                            desired = self.subscription()
+                            if authenticated and desired != wanted:
+                                remove = {k: sorted(set(v) - set(desired.get(k, []))) for k, v in wanted.items()}
+                                add = {k: sorted(set(v) - set(wanted.get(k, []))) for k, v in desired.items()}
+                                remove = {k: v for k, v in remove.items() if v}
+                                add = {k: v for k, v in add.items() if v}
+                                if remove:
+                                    await ws.send_json({'action': 'unsubscribe', **remove})
+                                if add:
+                                    await ws.send_json({'action': 'subscribe', **add})
+                                wanted = desired
+                                subscribed = False
+                                deadline = time.monotonic() + 15
+                                self.on_status('subscribing', None)
                             try:
                                 frame = await ws.receive(timeout=5)
                             except asyncio.TimeoutError:
@@ -45,10 +60,13 @@ class AlpacaStream:
                                 if kind == 'error':
                                     raise RuntimeError(f"Alpaca stream {message.get('code')}: {message.get('msg')}")
                                 if kind == 'success' and message.get('msg') == 'authenticated':
+                                    authenticated = True
                                     await ws.send_json({'action': 'subscribe', **wanted})
                                 elif kind == 'subscription':
                                     if not all(set(symbols) <= set(message.get(channel, [])) for channel, symbols in wanted.items()):
-                                        raise RuntimeError('Stream did not acknowledge all requested symbols')
+                                        if time.monotonic() > deadline:
+                                            raise RuntimeError('Stream did not acknowledge all requested symbols')
+                                        continue  # Unsubscribe acknowledgement can precede the new subscription.
                                     subscribed = True
                                     retry = 1
                                     self.on_status('live', None)

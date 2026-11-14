@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, post } from "@/lib/api";
-import { loadOverview, selectSymbol, selectTf } from "@/lib/data";
+import { loadMonitor, loadOverview, manualQuantity, selectSymbol, selectTf } from "@/lib/data";
 import { setState, useModelLabel, useStore } from "@/lib/store";
 import { age, cssVar, dt, fx, hhmm, hhmmss, isNum, px, sg, short, TFL, ud, usd } from "@/lib/format";
 import { PerfChart, PerfLegend, PriceChart } from "./Charts";
@@ -82,12 +82,26 @@ function Watchlist() {
   const ticks = useStore((s) => s.ticks);
   const symbol = useStore((s) => s.symbol);
   const latest = useStore((s) => s.latest);
+  const [filter, setFilter] = useState("");
+  const [add, setAdd] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const addSymbol = async (e: React.FormEvent) => {
+    e.preventDefault(); if (busy || !add.trim()) return;
+    setBusy(true); setError("");
+    try {
+      const r = await post('/api/watchlist', { symbol: add.trim().toUpperCase() });
+      await Promise.all([loadOverview(), loadMonitor()]); selectSymbol(r.symbol); setAdd(""); setFilter("");
+    } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+  };
   if (!mon) return <div className="empty">Loading…</div>;
   return (
+    <><div className="watch-controls"><input aria-label="Filter tickers" placeholder={`Search ${mon.rows.length} tickers`} value={filter} onChange={e => setFilter(e.target.value.toUpperCase())} /><form onSubmit={addSymbol}><input aria-label="Add ticker" placeholder="Add ticker" value={add} onChange={e => setAdd(e.target.value.toUpperCase())} /><button className="mini" disabled={busy}>{busy ? '…' : '+ ADD'}</button></form></div>
+    {error && <div className="alert crit" role="alert">{error}</div>}
     <table className="t">
       <thead><tr><th>Sym</th><th className="r">Last</th><th className="r">24h</th><th>24h·15m</th><th>Feed</th><th className="r">KRS</th></tr></thead>
       <tbody>
-        {mon.rows.map((r: any) => {
+        {mon.rows.filter((r: any) => !filter || r.symbol.includes(filter)).map((r: any) => {
           const t = ticks[r.symbol];
           const last = t?.last ?? r.last, pct = t?.pct24h ?? r.pct24h;
           const d = latest[r.symbol];
@@ -108,7 +122,7 @@ function Watchlist() {
           );
         })}
       </tbody>
-    </table>
+    </table></>
   );
 }
 
@@ -150,7 +164,7 @@ function ChartHeader() {
         {Object.entries(TFL).map(([k, l]) => <button key={k} className={k === tf ? "on" : ""} onClick={() => selectTf(k)}>{l}</button>)}
       </span>
       <span className="legend"><i style={{ ["--c" as any]: "var(--amber)" }} />EMA20 <i style={{ ["--c" as any]: "var(--s1)" }} />EMA50 <i className="tri" /><ModelName /></span>
-      {symbol && (["buy", "sell"] as const).map(side => <button key={side} className={`mini ${side === "buy" ? "up" : "dn"}`} onClick={() => setState({ view: "manual", manualDraft: { symbol, side, qty: symbol.includes("/") ? "0.0001" : "1" } })}>{side.toUpperCase()}</button>)}
+      {symbol && (["buy", "sell"] as const).map(side => <button key={side} className={`mini ${side === "buy" ? "up" : "dn"}`} onClick={() => setState({ view: "manual", manualDraft: { symbol, side, qty: manualQuantity(symbol) } })}>{side.toUpperCase()}</button>)}
       <span className="ph-r">ALPACA · {mkt?.ticker?.dataFeed || "—"}</span>
     </div>
   );

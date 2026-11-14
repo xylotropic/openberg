@@ -119,6 +119,8 @@ class ManualTrading:
         price = max(limit or Decimal(0), ref)
         if price <= 0:
             raise ValueError('No price is available. Use a limit price')
+        if kind == 'crypto' and not full_close and qty * (limit or ref) < 10:
+            raise ValueError('Crypto orders require at least $10 at the order price')
         multiplier = Decimal(str(asset.get('size') or 100)) if kind == 'option' else Decimal(1)
         if kind == 'option' and multiplier != 100:
             raise ValueError('Only standard 100-share option contracts are supported')

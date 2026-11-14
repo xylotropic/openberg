@@ -53,7 +53,7 @@ export function ManualView() {
       const r = await post("/api/manual/preview", { symbol, side, qty, type: option ? "limit" : type,
         limit_price: limit, time_in_force: crypto ? tif : "day" });
       if (version === revision.current) setReview(r);
-      if (ov?.settings.symbols.includes(symbol)) selectSymbol(symbol);
+      if ((ov?.settings.watchlist_symbols || ov?.settings.symbols).includes(symbol)) selectSymbol(symbol);
     } catch (e: any) { if (version === revision.current) setError(e.message); }
     finally { setBusy(false); }
   };
@@ -79,7 +79,7 @@ export function ManualView() {
       finally { setBusy(false); }
     } else {
       setState({ manualDraft: { symbol: p.symbol, side: p.side === "long" ? "sell" : "buy", qty: p.available_qty || String(p.size) } });
-      if (ov?.settings.symbols.includes(p.symbol)) selectSymbol(p.symbol);
+      if ((ov?.settings.watchlist_symbols || ov?.settings.symbols).includes(p.symbol)) selectSymbol(p.symbol);
     }
   };
   const request = review?.request, details = review?.review;
@@ -90,8 +90,8 @@ export function ManualView() {
       <section className="pnl manual-ticket"><div className="ph"><span className="code">ORDER</span>Manual order</div>
         <form onSubmit={preview}>
           <fieldset disabled={busy}>
-            <label>SYMBOL<input aria-label="Trade symbol" list="trade-symbols" value={symbol} onChange={e => { edited(); const s = e.target.value.toUpperCase(); setSymbol(s); setTif(s.includes("/") ? "gtc" : "day"); if (isOption(s)) setType("limit"); }} onBlur={() => { if (ov?.settings.symbols.includes(symbol)) selectSymbol(symbol); }} /></label>
-            <datalist id="trade-symbols">{ov?.settings.symbols.map((s: string) => <option key={s}>{s}</option>)}</datalist>
+            <label>SYMBOL<input aria-label="Trade symbol" list="trade-symbols" value={symbol} onChange={e => { edited(); const s = e.target.value.toUpperCase(); setSymbol(s); setTif(s.includes("/") ? "gtc" : "day"); if (isOption(s)) setType("limit"); }} onBlur={() => { if ((ov?.settings.watchlist_symbols || ov?.settings.symbols).includes(symbol)) selectSymbol(symbol); }} /></label>
+            <datalist id="trade-symbols">{(ov?.settings.watchlist_symbols || ov?.settings.symbols).map((s: string) => <option key={s}>{s}</option>)}</datalist>
             <div className="seg manual-side"><button type="button" className={side === "buy" ? "on up" : ""} onClick={() => { edited(); setSide("buy"); }}>BUY</button><button type="button" className={side === "sell" ? "on dn" : ""} onClick={() => { edited(); setSide("sell"); }}>SELL</button></div>
             <label>{option ? "CONTRACTS" : "QUANTITY"}<input aria-label="Trade quantity" type="number" min="0" step="any" value={qty} onChange={e => { edited(); setQty(e.target.value); }} /></label>
             <label>ORDER TYPE<select aria-label="Trade order type" value={option ? "limit" : type} onChange={e => { edited(); setType(e.target.value); }}><option value="limit">LIMIT</option>{!option && <option value="market">MARKET</option>}</select></label>

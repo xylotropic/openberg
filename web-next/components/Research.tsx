@@ -116,7 +116,7 @@ export function OptionsView() {
       <input aria-label="Options underlying" value={underlying} onChange={e => setUnderlying(e.target.value.toUpperCase())} />
       <input aria-label="Options expiration" type="date" value={expiry} onChange={e => setExpiry(e.target.value)} />
       <select aria-label="Option type" value={kind} onChange={e => setKind(e.target.value)}><option value="">CALLS + PUTS</option><option value="call">CALLS</option><option value="put">PUTS</option></select>
-      <button className="kbtn amber" disabled={busy} onClick={() => void load()}>{busy ? "LOADING…" : "LOAD CHAIN"}</button></div>
+      <button className="kbtn amber" disabled={busy} onClick={() => void load()}>{busy ? "LOADING…" : "LOAD CHAIN"}</button><button className="kbtn" onClick={() => setState({ view: 'surfaces', surfaceUnderlying: underlying })}>3D SURFACES</button></div>
     <div className="research-note amb">INDICATIVE · DELAYED / MODIFIED QUOTES · PAPER · LONG CALLS / PUTS</div>
     <ErrorLine text={error} />
     <section className="pnl"><div className="ph"><span className="code">CHAIN</span>{data?.underlying || underlying} options<span className="ph-r">{open ? "US MARKET OPEN" : "US MARKET CLOSED"} · {Object.keys(data?.items || {}).length} contracts</span></div>

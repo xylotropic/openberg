@@ -323,3 +323,22 @@ def test_quotes_continue_while_a_model_bar_callback_waits():
         assert store['BTC/USD'].ticker['bid1Price'] == 102
         waiting.set(); await asyncio.gather(*feed._callbacks)
     asyncio.run(run())
+
+
+def test_independent_executor_instances_cannot_claim_the_same_review_twice(tmp_path):
+    async def run():
+        ex, broker, db = setup(tmp_path)
+        r = await ex.manual.preview(ticket())
+        second = AlpacaExecutor(ex.s, db, broker, lambda *_: None, ex.feed)
+        results = await asyncio.gather(ex.manual.send(r['id']), second.manual.send(r['id']))
+        assert len(broker.sent) == 1 and all(r['request']['client_order_id'] == broker.sent[0]['client_order_id'] for r in results)
+    asyncio.run(run())
+
+
+def test_crypto_preview_enforces_observed_ten_dollar_order_minimum(tmp_path):
+    async def run():
+        ex, broker, _ = setup(tmp_path)
+        with pytest.raises(ValueError, match='at least .10'):
+            await ex.manual.preview(ticket(symbol='BTC/USD', qty='.05', time_in_force='gtc'))
+        assert not broker.sent
+    asyncio.run(run())

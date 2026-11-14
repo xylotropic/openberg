@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { post } from "@/lib/api";
-import { loadOverview, selectSymbol, selectTf } from "@/lib/data";
+import { loadOverview, manualQuantity, selectSymbol, selectTf } from "@/lib/data";
 import { getState, setState, useStore } from "@/lib/store";
 import { age, short } from "@/lib/format";
 
@@ -53,7 +53,7 @@ export function CommandBar() {
     const raw = (input.current?.value || "").trim().toUpperCase();
     if (input.current) input.current.value = "";
     if (!raw) return;
-    const syms: string[] = ov?.settings.symbols || [];
+    const syms: string[] = ov?.settings.watchlist_symbols || ov?.settings.symbols || [];
     const sym = syms.find((s) => s === raw || s === raw + "USDT" || s === raw + "/USD");
     const tfm = ({ "1M": "1", "5M": "5", "15M": "15", "1H": "60", "4H": "240" } as Record<string, string>)[raw];
     const pc = raw.match(/^(?:POS|MAXPOS)\s+(\d+)$/);
@@ -63,7 +63,7 @@ export function CommandBar() {
     if (ttf) return setState({ modal: { kind: "tf", data: ({ "1M": "1", "5M": "5", "15M": "15", "1H": "60" } as any)[ttf[1]] } });
     if (sym) return selectSymbol(sym);
     if (tfm) return selectTf(tfm);
-    if (["TRADE", "BUY", "SELL"].includes(raw)) return setState({ view: "manual", manualDraft: { symbol: symbol || "SPY", side: raw === "SELL" ? "sell" : "buy", qty: symbol?.includes("/") ? "0.0001" : "1" } });
+    if (["TRADE", "BUY", "SELL"].includes(raw)) return setState({ view: "manual", manualDraft: { symbol: symbol || "SPY", side: raw === "SELL" ? "sell" : "buy", qty: manualQuantity(symbol || "SPY") } });
     if (views[raw]) return setState({ view: views[raw] });
     if (raw === "ASK" || raw === "PRB") return ask(raw === "PRB");
     if (raw === "KEYS") return setState({ modal: { kind: "keys" } });
@@ -151,7 +151,7 @@ export async function setPosCap(v?: number) {
   }
 }
 
-const VIEWS = [["mon", "F1", "MON"], ["eval", "F2", "EVAL"], ["valid", "F6", "VALID"], ["trades", "F3", "TRADES"], ["news", "F4", "NEWSROOM"], ["log", "F5", "LOG"], ["options", "F7", "OPTIONS"], ["filings", "F8", "FILINGS"], ["manual", "F9", "TRADE"]] as const;
+const VIEWS = [["mon", "F1", "MON"], ["eval", "F2", "EVAL"], ["valid", "F6", "VALID"], ["trades", "F3", "TRADES"], ["news", "F4", "NEWSROOM"], ["log", "F5", "LOG"], ["options", "F7", "OPTIONS"], ["filings", "F8", "FILINGS"], ["manual", "F9", "TRADE"], ["surfaces", "F10", "SURFACES"]] as const;
 
 export function FKeys() {
   const view = useStore((s) => s.view);
@@ -159,7 +159,7 @@ export function FKeys() {
   return (
     <nav className="fkeys">
       {VIEWS.map(([v, k, l]) => (
-        <button key={v} className={view === v ? "on" : ""} onClick={() => setState({ view: v, ...(v === "manual" ? { manualDraft: { symbol: getState().symbol || "SPY", qty: getState().symbol?.includes("/") ? "0.0001" : "1" } } : {}) })}><b>{k}</b>{l}</button>
+        <button key={v} className={view === v ? "on" : ""} onClick={() => setState({ view: v, ...(v === "manual" ? { manualDraft: { symbol: getState().symbol || "SPY", qty: manualQuantity(getState().symbol || "SPY") } } : {}) })}><b>{k}</b>{l}</button>
       ))}
       <span className="fk-spacer" />
       {st && (
