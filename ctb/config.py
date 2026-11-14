@@ -118,6 +118,7 @@ class Settings:
     kairos_news_enabled: bool = _b("CTB_KAIROS_NEWS", True)
     kairos_news_max_per_hour: int = _i("CTB_KAIROS_NEWS_MAX_RPH", 20)
     alpha_monthly_model_usd: float = _f('CTB_ALPHA_MONTHLY_MODEL_USD',2)
+    scalper_enabled: bool = _b('CTB_SCALPER_ENABLED',False)
 
     # --- bracket geometry (multiples of decision-timeframe ATR) ---
     sl_atr: float = _f("CTB_SL_ATR", 1.5)
@@ -276,6 +277,7 @@ class Settings:
             "exit_chase_max_bp": self.exit_chase_max_bp,
             "allow_short": self.allow_short,
             "trading_enabled": self.trading_enabled,
+            "scalper_enabled": self.scalper_enabled,
             "exploration_mode": self.exploration_mode,
             "explore_min_lean_r": self.explore_min_lean_r,
             "explore_risk_pct": self.explore_risk_pct,

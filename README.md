@@ -10,7 +10,7 @@ Openberg combines a dense market monitor, live order books, manual order entry, 
 
 | Key | Screen | Features |
 | --- | --- | --- |
-| F1 | Monitor | Searchable watchlist, candles, EMA overlays, market map, live book, account, headlines, model signals |
+| F1 | Monitor | Searchable watchlist, fullscreen candles, EMA overlays, paper-account equity curve, live book, headlines, model signals |
 | F2 | Evaluation | Calibration, forecast outcomes, consistency probes, model history |
 | F3 | Trades | Model-owned trades, execution records, gross fill P/L |
 | F4 | Newsroom | Live financial wire, ticker filters, article corrections, original links, history |
@@ -21,6 +21,7 @@ Openberg combines a dense market monitor, live order books, manual order entry, 
 | F9 | Trade | Manual paper Buy/Sell, market/limit orders, review, positions, fills, cancellation |
 | F10 | Surfaces | Interactive option surfaces, point clouds, IV smiles, near-spot term structure |
 | F11 | Alpha | Economic-link paper experiment, evidence, ownership, exit obligations, marked NAV, model spend |
+| F12 | Strategy | Session-switched stock/crypto paper strategy, readiness, Drex budget and decisions |
 
 Type a ticker in the command bar to select it. Commands include `ASK`, `TRADE`, `BUY`, `SELL`, `NEWS`, `OPTIONS`, `FILINGS`, `ALPHA`, `KEYS`, `STRAT`, and `UNIV`.
 
@@ -94,6 +95,8 @@ The inherited harness includes calibrated classification questions, mirrored con
 Automatic trading starts **off**. The active Alpaca adapter uses native stop-limit backstops and managed exits for model positions. Automatic option entries remain disabled with indicative data. Stock forecast windows do not cross the market close; overnight gaps are excluded from applicable base-rate windows. Resting limit entries cannot guarantee maker execution.
 
 ### Economic-link paper experiment
+
+With `CTB_SCALPER_ENABLED=1`, the [session strategy](docs/SESSION_STRATEGY.md) replaces legacy model calls and economic-link entries/classifications. It scans TSLA, AAPL, GOOGL, MSFT, NVDA, AMD and INTC in the regular US session, then BTC/USD, ETH/USD and SOL/USD outside it. Full Drex packets are paced within a shared $2/month experiment ceiling; local scans run every 30 seconds. Crypto is long-only. Existing exit obligations and manual access remain active. Inspect **F12 STRATEGY** for current limits and readiness.
 
 The **F11 / ALPHA** screen runs a separate, versioned experiment. It tests sustained customer-demand changes against previously documented supplier relationships. This experiment has its own persisted arm/pause switch. It does not use the intraday AUTO-TRADE switch.
 

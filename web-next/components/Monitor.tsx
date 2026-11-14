@@ -1,10 +1,10 @@
 "use client";
-import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, post } from "@/lib/api";
 import { loadMonitor, loadOverview, manualQuantity, selectSymbol, selectTf } from "@/lib/data";
 import { setState, useModelLabel, useStore } from "@/lib/store";
 import { age, cssVar, dt, fx, hhmm, hhmmss, isNum, px, sg, short, TFL, ud, usd } from "@/lib/format";
-import { PerfChart, PerfLegend, PriceChart } from "./Charts";
+import { EquityChart, PriceChart } from "./Charts";
 import { ask, setPosCap, useNow } from "./TopBar";
 
 const Ph = ({ code, children, right }: { code: string; children?: React.ReactNode; right?: React.ReactNode }) => (
@@ -12,6 +12,7 @@ const Ph = ({ code, children, right }: { code: string; children?: React.ReactNod
 );
 
 export function MonitorView({ hidden }: { hidden: boolean }) {
+  const sessionStrategy=useStore(s=>s.ov?.settings.scalper_enabled);
   return (
     <main className="view on" style={hidden ? { display: "none" } : undefined}>
       <div className="grid-mon">
@@ -21,23 +22,13 @@ export function MonitorView({ hidden }: { hidden: boolean }) {
           <div className="ph sub"><span className="code">WEI</span>Cross-asset<span className="ph-r">Alpaca · market status</span></div>
           <div className="pb tight"><Macro /></div>
         </section>
-        <section className="pnl a-chart">
-          <ChartHeader />
-          <PriceChart />
-        </section>
+        <ChartPanel hidden={hidden} />
         <section className="pnl a-kai">
-          <Ph code="KRS" right={<><button className="mini" onClick={() => ask(false)}>ASK</button><button className="mini" onClick={() => ask(true)} data-tip="Ask + repeat & mirror consistency probes (3 extra requests)">+PRB</button></>}><ModelName /> signal</Ph>
+          <Ph code="KRS" right={sessionStrategy ? <button className="mini" onClick={()=>setState({view:"scalper"})}>STRATEGY</button> : <><button className="mini" onClick={() => ask(false)}>ASK</button><button className="mini" onClick={() => ask(true)} data-tip="Ask + repeat & mirror consistency probes (3 extra requests)">+PRB</button></>}><ModelName /> signal</Ph>
           <div className="pb scroll"><KairosPanel /></div>
         </section>
         <section className="pnl a-acct"><Account /></section>
-        <section className="pnl a-perf">
-          <div className="ph"><span className="code">COMP</span>Relative perf · 24h<PerfLegend /></div>
-          <PerfChart />
-        </section>
-        <section className="pnl a-map">
-          <Ph code="IMAP" right="size ∝ √turnover">Market map · change %</Ph>
-          <MarketMap visible={!hidden} />
-        </section>
+        <section className="pnl a-perf"><EquityChart /></section>
         <section className="pnl a-book"><BookPanel /></section>
         <section className="pnl a-news">
           <Ph code="TOP" right="Alpaca news plugin">News</Ph>
@@ -146,7 +137,27 @@ function Macro() {
 }
 
 /* ---------------------------------------------------------------- chart header */
-function ChartHeader() {
+function ChartPanel({ hidden }: { hidden: boolean }) {
+  const ref = useRef<HTMLElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const close = () => { if (document.fullscreenElement === ref.current) void document.exitFullscreen(); setExpanded(false); };
+  useEffect(() => {
+    const changed = () => { if (!document.fullscreenElement) setExpanded(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setExpanded(false); };
+    document.addEventListener("fullscreenchange", changed); document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("fullscreenchange", changed); document.removeEventListener("keydown", key); };
+  }, []);
+  useEffect(() => { if (hidden) close(); }, [hidden]);
+  const toggle = () => {
+    if (expanded) close();
+    else { setExpanded(true); void ref.current?.requestFullscreen?.().catch(() => {}); }
+  };
+  return <section ref={ref} className={`pnl a-chart${expanded ? " chart-expanded" : ""}`}>
+    <ChartHeader expanded={expanded} onFullscreen={toggle} /><PriceChart />
+  </section>;
+}
+
+function ChartHeader({ expanded, onFullscreen }: { expanded: boolean; onFullscreen: () => void }) {
   const mkt = useStore((s) => s.mkt);
   const symbol = useStore((s) => s.symbol);
   const tf = useStore((s) => s.tf);
@@ -165,7 +176,7 @@ function ChartHeader() {
       </span>
       <span className="legend"><i style={{ ["--c" as any]: "var(--amber)" }} />EMA20 <i style={{ ["--c" as any]: "var(--s1)" }} />EMA50 <i className="tri" /><ModelName /></span>
       {symbol && (["buy", "sell"] as const).map(side => <button key={side} className={`mini ${side === "buy" ? "up" : "dn"}`} onClick={() => setState({ view: "manual", manualDraft: { symbol, side, qty: manualQuantity(symbol) } })}>{side.toUpperCase()}</button>)}
-      <span className="ph-r">ALPACA · {mkt?.ticker?.dataFeed || "—"}</span>
+      <span className="ph-r">ALPACA · {mkt?.ticker?.dataFeed || "—"}<button className="mini" aria-label={expanded ? "Exit chart fullscreen" : "Fullscreen chart"} aria-pressed={expanded} onClick={onFullscreen}>{expanded ? "EXIT FULLSCREEN" : "FULLSCREEN"}</button></span>
     </div>
   );
 }
@@ -189,6 +200,11 @@ function KairosPanel() {
   const ov = useStore((s) => s.ov);
   useNow(5000);
   const pv = mkt?.symbol === symbol ? mkt?.state_preview : null;
+  if (ov?.settings.scalper_enabled) return <>
+    <div className="kv-verdict"><span className={`big ${d?.qset === "candles-session-v1" && d.action === "long" ? "up" : d?.qset === "candles-session-v1" && d.action === "short" ? "dn" : "muted"}`}>{d?.qset === "candles-session-v1" ? d.action.toUpperCase() : "WAITING"}</span></div>
+    {d?.qset === "candles-session-v1" && <><div className="kv"><div className="k">Drex target</div><div className="v">{d.model_action}</div><div className="k">Action weight</div><div className="v">{isNum(d.action_weight) ? `${(d.action_weight * 100).toFixed(1)}%` : "—"}</div><div className="k">Stop / target</div><div className="v">{fx(d.sl_bp / 100, 2)}% / {fx(d.tp_bp / 100, 2)}%</div><div className="k">Decided</div><div className="v">{hhmmss(d.ts)}</div></div><p>{d.reason}</p></>}
+    <button className="mini" onClick={() => setState({ view: "scalper" })}>OPEN STRATEGY</button>
+  </>;
   if (!d)
     return (
       <>
@@ -282,7 +298,7 @@ function Account() {
     ["Unrealised", <span key="u" className={ud(w.unrealized_pnl)}>{sg(w.unrealized_pnl)}</span>, "USD"],
     ["Today PnL", <span key="d" className={ud(a.daily_pnl)}>{sg(a.daily_pnl)}</span>, `halts at −${st.daily_loss_limit_pct}%`],
     ["Positions", <span key="p">{a.positions.length}/{st.max_positions} <button className="mini" onClick={() => setPosCap()} data-tip="Change the max number of open positions. Applies to new entries only.">CAP</button></span>, `${a.open_orders} open orders`],
-    ["Risk / trade", `${st.exploration_mode ? Math.min(st.explore_risk_pct, st.risk_per_trade_pct) : st.risk_per_trade_pct}%`, `entry cap ${st.max_entry_slip_bp}bp · ≤${st.max_leverage}x`],
+    [st.scalper_enabled ? "Allocation / trade" : "Risk / trade", `${st.scalper_enabled ? 5 : st.exploration_mode ? Math.min(st.explore_risk_pct, st.risk_per_trade_pct) : st.risk_per_trade_pct}%`, `entry cap ${st.max_entry_slip_bp}bp · ≤${st.max_leverage}x`],
   ];
   return (
     <>
@@ -309,72 +325,6 @@ function Account() {
         ) : <div className="empty">FLAT · no open positions</div>}
       </div>
     </>
-  );
-}
-
-/* ---------------------------------------------------------------- market map */
-type Node = { symbol: string; value: number; area: number; x: number; y: number; w: number; h: number; [k: string]: any };
-function squarify(items: any[], x: number, y: number, w: number, h: number): Node[] {
-  const total = items.reduce((a, b) => a + b.value, 0);
-  if (!total) return [];
-  const nodes = items.map((i) => ({ ...i, area: (i.value * w * h) / total }));
-  const out: Node[] = [];
-  let row: any[] = [], rect = { x, y, w, h };
-  const worst = (r: any[], len: number) => {
-    const s = r.reduce((a, b) => a + b.area, 0), mx = Math.max(...r.map((q) => q.area)), mn = Math.min(...r.map((q) => q.area));
-    return Math.max((len * len * mx) / (s * s), (s * s) / (len * len * mn));
-  };
-  const lay = (r: any[], rc: typeof rect) => {
-    const s = r.reduce((a, b) => a + b.area, 0);
-    if (rc.w >= rc.h) {
-      const cw = s / rc.h;
-      let cy = rc.y;
-      for (const q of r) { const qh = q.area / cw; out.push({ ...q, x: rc.x, y: cy, w: cw, h: qh }); cy += qh; }
-      return { x: rc.x + cw, y: rc.y, w: rc.w - cw, h: rc.h };
-    }
-    const rh = s / rc.w;
-    let cx = rc.x;
-    for (const q of r) { const qw = q.area / rh; out.push({ ...q, x: cx, y: rc.y, w: qw, h: rh }); cx += qw; }
-    return { x: rc.x, y: rc.y + rh, w: rc.w, h: rc.h - rh };
-  };
-  for (const n of nodes) {
-    const len = Math.min(rect.w, rect.h);
-    if (!row.length || worst([...row, n], len) <= worst(row, len)) row.push(n);
-    else { rect = lay(row, rect); row = [n]; }
-  }
-  if (row.length) lay(row, rect);
-  return out;
-}
-function heat(p: number) {
-  // diverging: red ← neutral grey → green, saturates at ±6%; the signed % label carries the value
-  const t = Math.min(Math.abs(p) / 6, 1), n = [38, 38, 38], g = [22, 150, 88], r = [196, 52, 52], c = p >= 0 ? g : r;
-  return `rgb(${n.map((v, i) => Math.round(v + (c[i] - v) * Math.pow(t, 0.75))).join(",")})`;
-}
-function MarketMap({ visible }: { visible: boolean }) {
-  const host = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
-  const universe: any[] = useStore((s) => s.mon?.universe) || [];
-  const tracked: string[] = useStore((s) => s.ov?.settings.symbols) || [];
-  useEffect(() => {
-    const ro = new ResizeObserver(([e]) => setSize({ w: e.contentRect.width, h: e.contentRect.height }));
-    ro.observe(host.current!);
-    return () => ro.disconnect();
-  }, []);
-  const rects = useMemo(() => (size.w && size.h ? squarify(universe.map((x) => ({ ...x, value: Math.sqrt(x.turnover24h) })), 0, 0, size.w, size.h) : []), [universe, size]);
-  return (
-    <div className="pb map-wrap" ref={host}>
-      {!universe.length ? <div className="empty">Loading universe…</div> : visible && (
-        <svg viewBox={`0 0 ${size.w} ${size.h}`}>
-          {rects.map((r) => (
-            <g key={r.symbol} data-tip={`${r.symbol} · ${px(r.last)}\n24h ${sg(r.pct24h, 2, "%")}\nturnover $${usd(r.turnover24h)} · OI $${usd(r.oi_value)}\nfunding ${sg(r.funding * 100, 4, "%")}`}>
-              <rect className={tracked.includes(r.symbol) ? "trk" : ""} x={r.x} y={r.y} width={Math.max(r.w, 0)} height={Math.max(r.h, 0)} fill={heat(r.pct24h)} />
-              {r.w > 34 && r.h > 15 && <text x={r.x + 4} y={r.y + 13}>{short(r.symbol)}</text>}
-              {r.w > 46 && r.h > 28 && <text className="p" x={r.x + 4} y={r.y + 26}>{sg(r.pct24h, 2, "%")}</text>}
-            </g>
-          ))}
-        </svg>
-      )}
-    </div>
   );
 }
 

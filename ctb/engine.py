@@ -48,6 +48,7 @@ class Engine:
         self.alpha_journal = Journal(self.db)
         self.coordinator = None
         self.alpha = None
+        self.scalper = None
         if s.venue == 'alpaca':
             s.watchlist_symbols = list(dict.fromkeys([*s.symbols, *s.watchlist_symbols]))
         self.store = MarketStore(s.watchlist_symbols if s.venue == 'alpaca' else s.symbols)
@@ -140,6 +141,10 @@ class Engine:
             from .alpha.service import AlphaService
             self.alpha=AlphaService(self)
             await self.alpha.start()
+            if self.s.scalper_enabled:
+                from .scalper import Scalper
+                self.scalper = Scalper(self)
+                await self.scalper.start()
         self.db.event("info", "started", f"engine started; model={self.s.model_spec.label} ({self.kairos.model}) "
                                          f"{'ready' if self.kairos.configured else 'NOT CONFIGURED'}; "
                                          f"trading={'on' if self.s.trading_enabled else 'observe-only'}")
@@ -277,6 +282,8 @@ class Engine:
         current run is closed and a new one starts with the new model."""
         from . import runs as runs_mod
         from .models import get
+        if self.s.scalper_enabled and provider!='drex':
+            raise ValueError('The session strategy uses Drex Finance')
         spec = get(provider)
         if provider == self.s.model_provider:
             return {"ok": True, "unchanged": True, "model_provider": provider}
@@ -298,6 +305,8 @@ class Engine:
         """Change strategy settings. Only while flat, and a new run starts, so every run's results come
         from one strategy configuration."""
         from . import runs as runs_mod
+        if self.s.scalper_enabled:
+            raise ValueError('The session strategy has versioned limits; legacy strategy settings are inactive')
         if self.db.one("SELECT id FROM trades WHERE status IN ('open','opening') LIMIT 1"):
             raise ValueError("close the open bot trades first (KILL, or wait for their exits): a run must not mix two strategies")
         before = self.s.strategy_view()
@@ -331,6 +340,8 @@ class Engine:
 
     async def test_model(self, provider: str | None = None) -> dict[str, Any]:
         """One tiny live request (1 noul question, counts against the hourly budget)."""
+        if self.s.scalper_enabled:
+            return {'ok':False,'error':'Model checks use the budgeted session strategy; inspect its last call'}
         client = self.kairos if provider in (None, self.s.model_provider) else self._model_client(provider)
         spec = client.spec
         if not client.configured:
@@ -364,6 +375,8 @@ class Engine:
             await self.executor.on_testnet_tick(symbol, t)
 
     async def stop(self) -> None:
+        if self.scalper:
+            await self.scalper.stop()
         if self.alpha:
             await self.alpha.stop()
         self.feed.stop()
@@ -460,6 +473,8 @@ class Engine:
         return min(eq * pct / 100 / (sl_bp / 10000), self.s.max_notional_usdt, eq * self.s.max_leverage * 0.9)
 
     async def decide(self, symbol: str, *, force_probe: bool = False) -> dict[str, Any] | None:
+        if self.s.scalper_enabled:
+            return None  # The batched session strategy replaces legacy model calls.
         if symbol in self.inflight:
             return None
         if not self.kairos.configured:
@@ -606,6 +621,8 @@ class Engine:
 
     # ------------------------------------------------------------------ news
     async def on_news(self, item: dict[str, Any]) -> None:
+        if self.s.scalper_enabled:
+            return
         if not (self.s.kairos_news_enabled and self.kairos.configured and self.kairos.spec.supports_news_return):
             return
         targets = item["symbols"][:2]
@@ -636,6 +653,7 @@ class Engine:
         dj = d.get("decision_json") or {}
         return {
             "id": d["id"], "ts": d["ts"], "symbol": d["symbol"], "action": d.get("action"), "reason": dj.get("reason"),
+            "model_action":dj.get('model_action'),"action_weight":dj.get('action_weight'),"execution":dj.get('execution'),
             "ev_long_r": dj.get("ev_long_r"), "ev_short_r": dj.get("ev_short_r"), "setup_quality": dj.get("setup_quality"),
             "data_sufficient": dj.get("data_sufficient"), "coherence": dj.get("coherence"), "expected_move_in_d": dj.get("expected_move_in_d"),
             "latency_ms": d.get("latency_ms"), "error_kind": d.get("error_kind"), "error_msg": d.get("error_msg"),

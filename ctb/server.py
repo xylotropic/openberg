@@ -82,6 +82,7 @@ def make_app(engine: Engine) -> web.Application:
     routes = web.RouteTableDef()
     research = None
     manual = None
+    equity_cache = {}
 
     def manual_trading():
         nonlocal manual
@@ -113,6 +114,11 @@ def make_app(engine: Engine) -> web.Application:
         if not getattr(engine,'alpha',None):
             raise ValueError('The economic-link strategy requires a connected pinned paper coordinator')
         return engine.alpha
+
+    @routes.get('/api/scalper')
+    async def scalper_status(_):
+        strategy=getattr(engine,'scalper',None)
+        return j(strategy.status() if strategy else {'enabled':False,'error':'Session strategy is not enabled'})
 
     @routes.get('/api/alpha')
     async def alpha_status(_):
@@ -412,6 +418,7 @@ def make_app(engine: Engine) -> web.Application:
                 return j({"error": f"halted: {engine.executor.halted_reason}. Send clear_halt=true to resume."}, 409)
             engine.executor.halted_reason = None
         s.trading_enabled = enabled
+        if s.scalper_enabled: save_env({'CTB_TRADING_ENABLED':'1' if enabled else '0'})
         engine.emit("event", engine.db.event("warn", "trading_toggled", f"testnet trading {'ENABLED' if enabled else 'disabled'} from dashboard"))
         return j({"trading_enabled": s.trading_enabled})
 
@@ -430,6 +437,7 @@ def make_app(engine: Engine) -> web.Application:
         if engine.executor:
             await engine.executor.kill("dashboard kill switch")
         s.trading_enabled = False
+        if s.scalper_enabled: save_env({'CTB_TRADING_ENABLED':'0'})
         return j({"killed": True})
 
     @routes.post("/api/decide")
@@ -449,6 +457,8 @@ def make_app(engine: Engine) -> web.Application:
 
     @routes.post("/api/decision-tf")
     async def decision_tf(req: web.Request) -> web.Response:
+        if s.scalper_enabled:
+            return j({'error':'The session scan runs every 30 seconds; chart timeframes do not change it'},409)
         """Switch the trading timeframe live: cadence, horizon and stop sizing change together."""
         body = await req.json()
         tf = str(body.get("tf", ""))
@@ -579,6 +589,30 @@ def make_app(engine: Engine) -> web.Application:
             res[sym] = [[t, round(100 * (c / base - 1), 4)] for t, c in pts]
         return j(res)
 
+    @routes.get('/api/equity-curve')
+    async def equity_curve(req):
+        if s.venue!='alpaca' or not engine.executor:
+            return j({'error':'Connect the Alpaca paper account first'},400)
+        period=req.query.get('period','1W')
+        if period not in ('1D','1W','1M'): return j({'error':'Choose 1D, 1W or 1M'},400)
+        key=(engine.executor.account_id,period)
+        if key not in equity_cache or time.time()-equity_cache[key]['at']>30:
+            try:
+                raw=await engine.executor.client.request('GET','/v2/account/portfolio/history',params={
+                    'period':period,'timeframe':'1D' if period=='1M' else '1Min' if period=='1D' else '15Min',
+                    'intraday_reporting':'continuous','pnl_reset':'no_reset'})
+                import math
+                points={int(t):float(v) for t,v in zip(raw.get('timestamp',[]),raw.get('equity',[]))
+                    if type(t) in (int,float) and type(v) in (int,float) and math.isfinite(t) and math.isfinite(v) and t>0 and v>=0}
+                equity_cache[key]={'at':time.time(),'points':sorted(points.items())}
+            except Exception as exc: return j({'error':str(exc)},502)
+        points=list(equity_cache[key]['points'])
+        ex=engine.executor
+        if not ex.sync_error and time.time()-ex.last_sync<60 and ex.wallet.get('equity') is not None:
+            current=(int(ex.last_sync),float(ex.wallet['equity']))
+            if not points or current[0]>points[-1][0]: points.append(current)
+        return j({'points':points,'currency':'USD','period':period,'source':'Alpaca paper account','as_of':points[-1][0] if points else None})
+
     # ---------------------------------------------------------------- keys
     @routes.get("/api/keys")
     async def keys_status(_: web.Request) -> web.Response:
@@ -701,6 +735,8 @@ def make_app(engine: Engine) -> web.Application:
         every feed, stream, store and instrument filter is rebuilt for the new list."""
         body = await req.json()
         syms = [str(x).strip().upper() for x in body.get("symbols") or []]
+        if s.scalper_enabled and set(syms)!= {'TSLA','AAPL','GOOGL','MSFT','NVDA','AMD','INTC','BTC/USD','ETH/USD','SOL/USD'}:
+            return j({'error':'The active session strategy uses seven equities plus BTC/USD, ETH/USD and SOL/USD. Add other symbols to the watchlist.'},409)
         if s.venue == "alpaca":
             errs = []
             if not syms or len(syms) > 30 or len(set(syms)) != len(syms):

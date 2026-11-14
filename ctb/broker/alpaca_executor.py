@@ -104,10 +104,27 @@ class AlpacaExecutor(Executor):
                    decision_price=None, horizon_min=None, vol_state=None, regime=None, events=None):
         async with self._entry_lock:
             await self.sync()
+            decision = self.db.one('SELECT * FROM decisions WHERE id=?',[decision_id])
+            candle = bool(decision and decision.get('qset_version') == 'candles-session-v1')
+            if candle:
+                from ..scalper import SYMBOLS, packet
+                if not self.s.scalper_enabled or symbol not in SYMBOLS or symbol not in self.s.symbols:
+                    return {'ok':False,'reason':'Session strategy is not active on this symbol'}
+                if time.time()-(decision.get('decision_json') or {}).get('signal_at',0)>25:
+                    return {'ok':False,'reason':'Drex signal expired'}
+                try:
+                    fresh=packet(self.feed.store[symbol],time.time())
+                    if fresh['last_close_at'] != decision['state_json']['last_close_at']:
+                        raise ValueError('Candle changed before execution')
+                except ValueError as exc: return {'ok':False,'reason':str(exc)}
             reason = self.check_guards(symbol)
             if self.manual_pending(symbol):
                 return {"ok": False, "reason": "A manual paper order on this symbol is pending reconciliation"}
             kind = asset_class(symbol)
+            if candle:
+                boundary=self.clock.get('next_open') if kind=='crypto' else self.clock.get('next_close')
+                if (kind=='crypto' and self.clock.get('is_open')) or time.time()+35*60>timestamp(boundary):
+                    return {'ok':False,'reason':'Session boundary blocks new entry'}
             if reason:
                 return {"ok": False, "reason": reason}
             if self.account.get('trading_blocked') or self.account.get('account_blocked'):
@@ -121,6 +138,8 @@ class AlpacaExecutor(Executor):
             asset = self.instruments.get(symbol) or await self.client.asset(symbol)
             if not asset.get('tradable') or (side == 'short' and not asset.get('shortable')):
                 return {"ok": False, "reason": "Asset not tradable/shortable on this Alpaca account"}
+            if candle and side=='short' and not asset.get('easy_to_borrow'):
+                return {'ok':False,'reason':'Stock borrow unavailable'}
             if any(self._order_symbol(o) == symbol.replace('/', '') for o in self.open_orders):
                 return {"ok": False, "reason": "Existing order on symbol; ownership cannot be shared"}
             st = self.feed.store[symbol]
@@ -128,6 +147,10 @@ class AlpacaExecutor(Executor):
                 return {"ok": False, "reason": "Quote is stale"}
             buy = side == 'long'
             q = st.ticker
+            if candle:
+                bid=float(q.get('bid1Price') or 0);ask=float(q.get('ask1Price') or 0)
+                if not -2<=time.time()-st.book_ts<=5 or not 0<bid<=ask or (ask-bid)/((ask+bid)/2)*10000>(20 if kind=='crypto' else 5):
+                    return {'ok':False,'reason':'Execution quote failed freshness/spread checks'}
             ref = float(q.get('ask1Price' if buy else 'bid1Price') or 0)
             if not ref or sl_bp <= 0:
                 return {"ok": False, "reason": "Executable quote or stop distance unavailable"}
@@ -137,12 +160,15 @@ class AlpacaExecutor(Executor):
             risk_pct, sizing = risk_pct_for(self.s, exploration=exploration, ev_r=ev_r, vol_state=vol_state,
                                            run_drawdown_pct=self.run_drawdown_pct(), same_side_corr=correlations)
             risk = eq * risk_pct / 100
+            if candle: risk = eq*.05*(sl_bp/10000)
             open_risk = sum(float(t.get('risk_usd') or 0) for t in self.owned())
             risk = min(risk, max(0, eq * self.s.max_open_risk_pct / 100 - open_risk))
             if sum(t['side'] == side for t in self.owned()) >= self.s.max_same_side:
                 return {"ok": False, "reason": "Same-side position cap"}
             available = max(0.0, float(self.account['cash'])) if kind == 'crypto' else self.wallet['available']
             notional = min(risk / (sl_bp / 10000), self.s.max_notional_usdt, available * .9, eq * self.s.max_leverage * .9)
+            if candle:
+                notional=min(eq*.05,risk/(sl_bp/10000),available*.9,eq*self.s.max_leverage*.9)
             step = float(asset.get('min_trade_increment') or 1e-8) if kind == 'crypto' else 1.0
             dec_step = Decimal(str(step))
             qty = float((Decimal(str(notional)) / Decimal(str(ref)) / dec_step).to_integral_value(rounding=ROUND_DOWN) * dec_step)
@@ -151,6 +177,12 @@ class AlpacaExecutor(Executor):
             maker = self.s.entry_mode == 'maker'
             price = float(q.get('bid1Price' if buy else 'ask1Price') or ref) if maker else ref * (1 + (1 if buy else -1) * self.s.max_entry_slip_bp / 10000)
             price = round(price, 2 if price >= 1 else 4)
+            if candle:
+                qty=float((Decimal(str(notional))/Decimal(str(max(ref,price)))/dec_step).to_integral_value(rounding=ROUND_DOWN)*dec_step)
+                if qty<=0 or qty<float(asset.get('min_order_size') or step):
+                    return {'ok':False,'reason':'Strategy cap below minimum order size'}
+                dj=decision['decision_json'];dj['execution_quote_at']=st.book_ts
+                self.db.update('decisions',decision_id,{'decision_json':dj})
             link = 'ctba-' + uuid.uuid4().hex[:28]
             t_id = self.db.insert('trades', {"venue": "alpaca", "account_id": self.account_id, "multiplier": 1,
                 "symbol": symbol, "side": side, "decision_id": decision_id, "entry_link_id": link, "status": "opening",
@@ -158,7 +190,7 @@ class AlpacaExecutor(Executor):
                 "requested_qty": qty, "ref_price": ref, "cap_price": price, "decision_price": decision_price,
                 "planned_sl_bp": sl_bp, "planned_tp_bp": tp_bp, "ev_r": ev_r,
                 "risk_usd": qty * ref * sl_bp / 10000, "sizing_json": sizing,
-                "run_id": self.run_id_fn(), "mode": "exploration" if exploration else "strict",
+                "run_id": self.run_id_fn(), "mode": "candle" if candle else "exploration" if exploration else "strict",
                 "entry_mode": "maker" if maker else "taker", "exit_mode": "managed", "horizon_min": horizon_min,
                 "regime": regime, "events_json": events or []})
             body = {"symbol": symbol, "qty": format(Decimal(str(qty)), 'f'), "side": "buy" if buy else "sell", "type": "limit",
@@ -316,13 +348,18 @@ class AlpacaExecutor(Executor):
         await self._submit_exit(t, remaining, new=bool(links and last_found))
         return False
 
-    async def close(self, symbol, reason, *, locked=False):
+    async def close(self, symbol, reason, *, locked=False, expected_trade_id=None):
         async with self.lock(symbol):
             trades = self.owned(symbol)
             if len(trades) != 1:
                 return False
             t = trades[0]
+            if expected_trade_id is not None and t['id']!=expected_trade_id:
+                return False
             if t['status'] == 'opening':
+                if t.get('mode')=='candle':
+                    # Keep the exit obligation through cancellation races and late fills.
+                    self.db.update('trades',t['id'],{'close_reason':reason})
                 try:
                     order = await self.client.order(t['entry_link_id'])
                     if order['status'] not in TERMINAL:
@@ -404,6 +441,8 @@ class AlpacaExecutor(Executor):
                         await self.continue_close(t)
                     elif not self.position(t['symbol']):
                         await self.record_close(t)
+                    elif t.get('mode')=='candle' and t.get('close_reason'):
+                        await self.close(t['symbol'],t['close_reason'])
                     elif t['deadline_ts'] <= time.time():
                         await self.close(t['symbol'], 'time_stop')
                     else:

@@ -75,6 +75,72 @@ def test_asset_rules_distinguish_spot_equity_and_option():
     assert asset_class('SPY261120C00750000') == 'option'
 
 
+def test_candle_executor_allocates_five_percent_of_current_equity(tmp_path):
+    from test_scalper import history
+    from ctb.scalper import packet,VERSION
+    ex,b,db=executor(tmp_path)
+    store,now=history(end=time.time());ex.feed.store=store
+    ex.s.scalper_enabled=True;ex.s.maker_wait_s=0;ex.s.symbols=['TSLA']
+    # Quote freshness is evaluated at execution time, independently of trade prints.
+    store['TSLA'].book_ts=time.time();store['TSLA'].last_update=time.time()
+    data=packet(store['TSLA'],time.time())
+    did=db.insert('decisions',{'ts':time.time(),'symbol':'TSLA','qset_version':VERSION,'state_json':data,
+        'decision_json':{'signal_at':time.time()}})
+    async def rejected(body):
+        b.submitted.append(body);return {'id':'rejected','status':'rejected','filled_qty':'0',**body}
+    b.submit=rejected
+    asyncio.run(ex.open(symbol='TSLA',side='long',sl_bp=100,tp_bp=200,decision_id=did,ev_r=0,horizon_min=30))
+    assert len(b.submitted)==1
+    body=b.submitted[0]
+    assert float(body['qty'])*float(body['limit_price'])<=5000.000001
+    assert float(body['qty'])*float(body['limit_price'])>4800
+    trade=db.one('SELECT * FROM trades WHERE decision_id=?',[did])
+    assert trade['risk_usd']<=50.000001 and trade['mode']=='candle'
+
+
+def test_candle_executor_refuses_expired_model_signal(tmp_path):
+    from ctb.scalper import VERSION
+    ex,b,db=executor(tmp_path);ex.s.scalper_enabled=True;ex.s.symbols=['TSLA']
+    did=db.insert('decisions',{'ts':time.time(),'symbol':'TSLA','qset_version':VERSION,'decision_json':{'signal_at':time.time()-26}})
+    res=asyncio.run(ex.open(symbol='TSLA',side='long',sl_bp=100,tp_bp=200,decision_id=did,ev_r=0))
+    assert not res['ok'] and 'expired' in res['reason'] and not b.submitted
+
+
+def test_candle_pending_exit_survives_a_late_fill(tmp_path,monkeypatch):
+    ex,b,db=executor(tmp_path);ex.s.symbols=['TSLA']
+    tid=add_trade(db,symbol='TSLA',side='long',mode='candle',status='opening',qty=None,requested_qty=1,
+        planned_sl_bp=100,planned_tp_bp=200)
+    b.by_link['ctba-entry']={'id':'entry','client_order_id':'ctba-entry','symbol':'TSLA','status':'new','filled_qty':'0'}
+    async def cancel(order):
+        b.cancelled.append(order['id']);b.by_link[order['client_order_id']]['status']='canceled'
+    b.cancel=cancel
+    asyncio.run(ex.close('TSLA','drex_exit'))
+    assert db.one('SELECT close_reason FROM trades WHERE id=?',[tid])['close_reason']=='drex_exit'
+    b.pos=[{'symbol':'TSLA','qty':'1','side':'long','avg_entry_price':'100','current_price':'100','unrealized_pl':'0','market_value':'100'}]
+    order=b.by_link['ctba-entry'];order.update(filled_qty='1',filled_avg_price='100')
+    async def submit(body):
+        b.submitted.append(body);r={'id':body['client_order_id'],**body,'status':'new','filled_qty':'0'}
+        b.by_link[body['client_order_id']]=r;return r
+    b.submit=submit
+    asyncio.run(ex.resolve_entry(db.one('SELECT * FROM trades WHERE id=?',[tid]),order))
+    assert db.one('SELECT status FROM trades WHERE id=?',[tid])['status']=='open'
+    async def refresh(): pass
+    ex.manual.refresh=refresh
+    async def stop_after_iteration(seconds):
+        if seconds==5: raise asyncio.CancelledError()
+    monkeypatch.setattr(asyncio,'sleep',stop_after_iteration)
+    with pytest.raises(asyncio.CancelledError): asyncio.run(ex.reconcile_loop())
+    assert any(o['type']=='market' and o['side']=='sell' and o['qty']=='1.0' for o in b.submitted)
+
+
+def test_exact_trade_close_does_not_close_a_replacement(tmp_path):
+    ex,b,db=executor(tmp_path)
+    old=add_trade(db,status='closed')
+    add_trade(db,status='opening',entry_link_id='replacement',mode='candle')
+    assert not asyncio.run(ex.close('BTC/USD','drex_exit',expected_trade_id=old))
+    assert not b.cancelled and not b.submitted
+
+
 def test_drex_spec_uses_independent_credentials_and_finance_model(monkeypatch):
     monkeypatch.delenv('CTB_DREX_MODEL', raising=False)
     monkeypatch.delenv('NACE_BASE_URL', raising=False)

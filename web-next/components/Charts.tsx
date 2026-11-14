@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import {
   createChart, type IChartApi, type ISeriesApi, type SeriesMarker, type Time, type UTCTimestamp,
 } from "lightweight-charts";
+import { api } from "@/lib/api";
 import { getState, setBarSink, useStore, type Bar } from "@/lib/store";
-import { cssVar, decimalsOf, fx, SERIES_C, sg, short, ud, usd } from "@/lib/format";
+import { cssVar, decimalsOf, fx, ud, usd } from "@/lib/format";
 
 type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number };
 
@@ -168,67 +169,44 @@ export function PriceChart() {
   );
 }
 
-export function PerfChart() {
+export function EquityChart() {
   const host = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
-  const series = useRef<Record<string, ISeriesApi<"Line">>>({});
-  const perf = useStore((s) => s.perf);
-  const order = usePerfOrder();
-
+  const series = useRef<ISeriesApi<"Area"> | null>(null);
+  const [period, setPeriod] = useState("1W");
+  const [data, setData] = useState<any>(null), [error, setError] = useState("");
   useEffect(() => {
-    chart.current = createChart(host.current!, { ...(baseOpts() as any), handleScroll: false, handleScale: false });
-    return () => {
-      chart.current?.remove();
-      chart.current = null;
-      series.current = {};
-    };
+    const c = createChart(host.current!, baseOpts() as any);
+    chart.current = c;
+    series.current = c.addAreaSeries({ lineColor: cssVar("--amber"), topColor: "rgba(255,155,0,.22)", bottomColor: "rgba(255,155,0,0)", lineWidth: 2,
+      priceLineVisible: false, priceFormat: { type: "custom", minMove: .01, formatter: (v: number) => `$${fx(v, 2)}` } });
+    return () => { c.remove(); chart.current = null; series.current = null; };
   }, []);
   useEffect(() => {
-    if (!chart.current) return;
-    for (const [sym, ser] of Object.entries(series.current)) {
-      if (!order.includes(sym)) { chart.current.removeSeries(ser); delete series.current[sym]; }
-    }
-    order.forEach((sym, i) => {
-      if (!perf[sym]) return;
-      if (!series.current[sym])
-        series.current[sym] = chart.current!.addLineSeries({
-          color: cssVar(SERIES_C[i % 5]), lineWidth: 2, title: short(sym), priceLineVisible: false, crosshairMarkerRadius: 3,
-          priceFormat: { type: "custom", minMove: 0.01, formatter: (v: number) => sg(v, 2, "%") },
-        });
-      series.current[sym].setData(perf[sym].map(([t, v]) => ({ time: t as UTCTimestamp, value: v })));
-    });
-    chart.current.timeScale().fitContent();
-  }, [perf, order]);
-  return <div className="pb chart-wrap"><div ref={host} className="chart-host" /></div>;
-}
-
-/** At most 5 series (the validated palette has 5 hues; colours are never cycled):
- * the loaded symbol plus the first others in the universe. */
-function usePerfOrder(): string[] {
-  const all: string[] = useStore((s) => s.ov?.settings.symbols) || [];
-  const sel = useStore((s) => s.symbol);
-  const key = `${sel}|${all.join(",")}`;
-  const ref = useRef<{ key: string; v: string[] }>({ key: "", v: [] });
-  if (ref.current.key !== key) {
-    const rest = all.filter((x) => x !== sel);
-    ref.current = { key, v: (sel && all.includes(sel) ? [sel, ...rest] : rest).slice(0, 5).sort((a, b) => all.indexOf(a) - all.indexOf(b)) };
-  }
-  return ref.current.v;
-}
-
-export function PerfLegend() {
-  const perf = useStore((s) => s.perf);
-  const order = usePerfOrder();
-  return (
-    <span className="ph-r">
-      {order.map((s, i) => {
-        const v = perf[s]?.[perf[s].length - 1]?.[1];
-        return (
-          <span key={s}>
-            <span style={{ color: `var(${SERIES_C[i % 5]})` }}>■</span><span className="w">{short(s)}</span>&nbsp;<span className={ud(v)}>{sg(v, 2, "%")}</span>&nbsp;&nbsp;
-          </span>
-        );
-      })}
-    </span>
-  );
+    let active = true;
+    setData(null); setError("");
+    const load = async () => {
+      try { const response = await api(`/api/equity-curve?period=${period}`); if (active) { setData(response); setError(""); } }
+      catch (e: any) { if (active) setError(e.message); }
+    };
+    void load(); const timer = setInterval(() => { if (!document.hidden) void load(); }, 30000);
+    return () => { active = false; clearInterval(timer); };
+  }, [period]);
+  const firstDraw = useRef("");
+  useEffect(() => {
+    if (!series.current || !chart.current) return;
+    const points: [number, number][] = data?.period === period ? data.points : [];
+    series.current.setData(points.map(([t, value]) => ({ time: t as UTCTimestamp, value })));
+    if (points.length && firstDraw.current !== period) { chart.current.timeScale().fitContent(); firstDraw.current = period; }
+  }, [data, period]);
+  const last = data?.period === period ? data.points?.at(-1)?.[1] : null;
+  return <>
+    <div className="ph"><span className="code">NAV</span>Paper account equity
+      <span className="seg">{["1D", "1W", "1M"].map(p => <button key={p} className={p === period ? "on" : ""} onClick={() => setPeriod(p)}>{p}</button>)}</span>
+      <span className="ph-r">{last != null ? `$${fx(last, 2)}` : "—"}</span>
+    </div>
+    <div className="pb chart-wrap"><div ref={host} className="chart-host" role="img" aria-label="Alpaca paper account equity curve in USD" />
+      {(error || !data?.points?.length) && <div className={`chart-message${error ? " error" : ""}`} role="status">{error || (data ? "No account history yet" : "Loading account equity…")}</div>}
+    </div>
+  </>;
 }

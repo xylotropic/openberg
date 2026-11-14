@@ -66,7 +66,8 @@ export function CommandBar() {
     if (["TRADE", "BUY", "SELL"].includes(raw)) return setState({ view: "manual", manualDraft: { symbol: symbol || "SPY", side: raw === "SELL" ? "sell" : "buy", qty: manualQuantity(symbol || "SPY") } });
     if (views[raw]) return setState({ view: views[raw] });
     if (raw === "ALPHA") return setState({ view: "alpha" });
-    if (raw === "ASK" || raw === "PRB") return ask(raw === "PRB");
+    if (raw === "SCALPER" || raw === "STRATEGY") return setState({ view: "scalper" });
+    if (raw === "ASK" || raw === "PRB") return ov?.settings.scalper_enabled ? setState({view:"scalper"}) : ask(raw === "PRB");
     if (raw === "KEYS") return setState({ modal: { kind: "keys" } });
     if (raw === "STRAT" || raw === "STRATEGY") return setState({ modal: { kind: "strategy" } });
     if (raw === "UNIV" || raw === "SYMBOLS" || raw === "SYM") return setState({ modal: { kind: "universe" } });
@@ -108,10 +109,10 @@ export function CommandBar() {
         <button className="go" type="submit">GO</button>
       </form>
       <div className="cmd-right">
-        <label className="arm explore" data-tip="Exploration: trade the model's preferred side even when strict quality gates block it, at reduced risk. Safety gates still apply.">
+        {!ov?.settings.scalper_enabled && <label className="arm explore" data-tip="Exploration: trade the model's preferred side even when strict quality gates block it, at reduced risk. Safety gates still apply.">
           <input type="checkbox" checked={!!ov?.settings.exploration_mode} onChange={(e) => onExplore(e.target.checked)} />
           <span className="arm-box" /><span>EXPLORE</span>
-        </label>
+        </label>}
         <label className="arm" data-tip="Allow the bot to place orders on the dedicated Alpaca paper account">
           <input type="checkbox" checked={!!ov?.settings.trading_enabled} onChange={(e) => onTrading(e.target.checked)} />
           <span className="arm-box" /><span>AUTO-TRADE</span>
@@ -152,7 +153,7 @@ export async function setPosCap(v?: number) {
   }
 }
 
-const VIEWS = [["mon", "F1", "MON"], ["eval", "F2", "EVAL"], ["valid", "F6", "VALID"], ["trades", "F3", "TRADES"], ["news", "F4", "NEWSROOM"], ["log", "F5", "LOG"], ["options", "F7", "OPTIONS"], ["filings", "F8", "FILINGS"], ["manual", "F9", "TRADE"], ["surfaces", "F10", "SURFACES"], ["alpha", "F11", "ALPHA"]] as const;
+const VIEWS = [["mon", "F1", "MON"], ["eval", "F2", "EVAL"], ["valid", "F6", "VALID"], ["trades", "F3", "TRADES"], ["news", "F4", "NEWSROOM"], ["log", "F5", "LOG"], ["options", "F7", "OPTIONS"], ["filings", "F8", "FILINGS"], ["manual", "F9", "TRADE"], ["surfaces", "F10", "SURFACES"], ["alpha", "F11", "ALPHA"], ["scalper", "F12", "STRATEGY"]] as const;
 
 export function FKeys() {
   const view = useStore((s) => s.view);
@@ -163,7 +164,7 @@ export function FKeys() {
         <button key={v} className={view === v ? "on" : ""} onClick={() => setState({ view: v, ...(v === "manual" ? { manualDraft: { symbol: getState().symbol || "SPY", qty: manualQuantity(getState().symbol || "SPY") } } : {}) })}><b>{k}</b>{l}</button>
       ))}
       <span className="fk-spacer" />
-      {st && (
+      {st && !st.scalper_enabled && (
         <span className="tradetf" data-tip="How often the model is asked and trades are decided. The chart buttons only change the view.">
           <span className="tt-l">TRADE TF</span>
           <span className="seg">
@@ -175,8 +176,8 @@ export function FKeys() {
           <span className="tt-h">hold ≤ {st.horizon_minutes >= 60 ? `${st.horizon_minutes / 60}h` : `${st.horizon_minutes}m`} · stop {st.atr_tf}m ATR</span>
         </span>
       )}
-      {st && <ModelSwitch />}
-      {st && <button className="kbtn stratbtn" onClick={() => setState({ modal: { kind: "strategy" } })}
+      {st && !st.scalper_enabled && <ModelSwitch />}
+      {st && !st.scalper_enabled && <button className="kbtn stratbtn" onClick={() => setState({ modal: { kind: "strategy" } })}
         data-tip="Brackets, entries, mirror averaging, trade trigger, filters, sizing, drift action">STRATEGY</button>}
       <span className="venue">VENUE <b>{st?.venue_label || "ALPACA PAPER"}</b> · DATA <b>IEX + CRYPTO</b> · MODEL <b>{String(st?.model_id || "—").toUpperCase()}</b></span>
     </nav>
@@ -255,7 +256,7 @@ export function StatusLine() {
       <span><Dot c={!k.configured ? "warn" : k.last_error ? "bad" : "ok"} />{String(k.label || "MODEL").toUpperCase()} <b>{k.configured ? (k.last_error ? "ERROR" : "READY") : "NO KEY"}</b> {k.requests_last_hour}/{k.budget_per_hour} req/h</span>
       <span><Dot c={ov.executor_error ? "bad" : a?.private_stream ? "ok" : "warn"} />PAPER <b>{ov.executor_error ? "OFFLINE" : a?.private_stream ? "STREAMING" : "POLLING"}</b>{a?.last_sync ? ` · sync ${age(now / 1000 - a.last_sync)}` : ""}</span>
       {ov.run && <span data-tip={ov.run.name}>RUN <b className="amb">{ov.run.id}</b></span>}
-      <span>MODE <b className={a?.trading_enabled ? "up" : ""}>{a?.trading_enabled ? "AUTO-TRADE" : "OBSERVE"}</b>{st.exploration_mode && <b className="amb"> · EXPLORE</b>}</span>
+      <span>MODE <b className={a?.trading_enabled ? "up" : ""}>{a?.trading_enabled ? "AUTO-TRADE" : "OBSERVE"}</b>{!st.scalper_enabled && st.exploration_mode && <b className="amb"> · EXPLORE</b>}</span>
       <span>TRADE TF <b className="amb">{st.tf_profiles[st.decision_tf]?.label || st.decision_tf}</b> · HOLD ≤ <b>{st.horizon_minutes}m</b></span>
       <span>LABELLED <b>{ov.labelled_total}</b></span>
       <span>{symbol?.includes("/") ? "CRYPTO SPOT · 24/7" : "STOCKS · IEX"}</span>

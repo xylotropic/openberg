@@ -1,6 +1,6 @@
 "use client";
 import { useEffect } from "react";
-import { connectSocket, loadDecisions, loadMarket, loadMonitor, loadNews, loadOverview, loadPerf } from "@/lib/data";
+import { connectSocket, loadDecisions, loadMarket, loadMonitor, loadNews, loadOverview } from "@/lib/data";
 import { setState, useStore } from "@/lib/store";
 import { Alerts, Clocks, CommandBar, FKeys, StatusLine } from "./TopBar";
 import { MonitorView } from "./Monitor";
@@ -12,6 +12,7 @@ import { Tip } from "./Tip";
 import { ManualView } from "./Manual";
 import { SurfacesView } from "./Surfaces";
 import { AlphaView } from "./Alpha";
+import { ScalperView } from "./Scalper";
 
 /** Polls only what has no push channel; everything that moves arrives over /ws. */
 function every(ms: number, fn: () => Promise<unknown>) {
@@ -29,19 +30,18 @@ export default function Terminal() {
     let stop: (() => void)[] = [];
     (async () => {
       await loadOverview().catch(() => {});
-      await Promise.all([loadMonitor(), loadMarket(), loadDecisions(), loadPerf(), loadNews()].map((p) => p.catch(() => {})));
+      await Promise.all([loadMonitor(), loadMarket(), loadDecisions(), loadNews()].map((p) => p.catch(() => {})));
       stop = [
         connectSocket(),
         every(10_000, loadOverview), // settings, budgets, labelled count (account itself is pushed)
         every(5_000, loadMonitor), // universe map, macro, tape, headlines, sparklines (ticks are pushed)
         every(10_000, loadMarket), // state preview + derivatives block (candles/book are pushed)
-        every(30_000, loadPerf),
         every(60_000, loadNews),
         every(60_000, loadDecisions), // labels land in the background
       ];
     })();
     const onKey = (e: KeyboardEvent) => {
-      const fk = ({ F1: "mon", F2: "eval", F3: "trades", F4: "news", F5: "log", F6: "valid", F7: "options", F8: "filings", F9: "manual", F10: "surfaces", F11: "alpha" } as const)[e.key as "F1"];
+      const fk = ({ F1: "mon", F2: "eval", F3: "trades", F4: "news", F5: "log", F6: "valid", F7: "options", F8: "filings", F9: "manual", F10: "surfaces", F11: "alpha", F12: "scalper" } as const)[e.key as "F1"];
       if (fk) {
         e.preventDefault();
         setState({ view: fk });
@@ -76,6 +76,7 @@ export default function Terminal() {
           {view === "manual" && <ManualView />}
           {view === "surfaces" && <SurfacesView />}
           {view === "alpha" && <AlphaView />}
+          {view === "scalper" && <ScalperView />}
           {view === "options" && <OptionsView />}
           {view === "filings" && <FilingsView />}
           {view === "log" && <LogView />}

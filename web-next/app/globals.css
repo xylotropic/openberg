@@ -119,16 +119,16 @@ button { font: inherit; cursor: pointer; }
 /* monitor grid */
 .grid-mon { display: grid; gap: 4px; grid-template-columns: minmax(330px, 1.05fr) minmax(0, 1.55fr) minmax(0, 1.25fr) minmax(330px, 1.05fr);
   grid-template-rows: 460px 300px 290px auto;
-  grid-template-areas: "mon chart chart kai" "acct perf map book" "news tape stats stats" "log log log log"; }
+  grid-template-areas: "mon chart chart kai" "acct perf perf book" "news tape stats stats" "log log log log"; }
 .a-mon { grid-area: mon; } .a-chart { grid-area: chart; } .a-kai { grid-area: kai; } .a-acct { grid-area: acct; } .a-perf { grid-area: perf; }
-.a-map { grid-area: map; } .a-book { grid-area: book; } .a-news { grid-area: news; } .a-tape { grid-area: tape; } .a-stats { grid-area: stats; } .a-log { grid-area: log; max-height: 360px; }
+.a-book { grid-area: book; } .a-news { grid-area: news; } .a-tape { grid-area: tape; } .a-stats { grid-area: stats; } .a-log { grid-area: log; max-height: 360px; }
 @media (max-width: 1380px) {
   .grid-mon { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto;
-    grid-template-areas: "chart chart" "mon kai" "acct book" "perf map" "news tape" "stats stats" "log log"; }
-  .a-chart { height: 460px; } .a-mon, .a-kai { height: 460px; } .a-acct, .a-book, .a-perf, .a-map, .a-news, .a-tape { height: 300px; } .a-stats { height: auto; }
+    grid-template-areas: "chart chart" "mon kai" "acct book" "perf perf" "news tape" "stats stats" "log log"; }
+  .a-chart { height: 460px; } .a-mon, .a-kai { height: 460px; } .a-acct, .a-book, .a-perf, .a-news, .a-tape { height: 300px; } .a-stats { height: auto; }
 }
 @media (max-width: 760px) {
-  .grid-mon { grid-template-columns: minmax(0, 1fr); grid-template-areas: "chart" "mon" "kai" "acct" "book" "perf" "map" "news" "tape" "stats" "log"; }
+  .grid-mon { grid-template-columns: minmax(0, 1fr); grid-template-areas: "chart" "mon" "kai" "acct" "book" "perf" "news" "tape" "stats" "log"; }
   .a-mon, .a-kai { height: auto; }
   .venue { display: none; }
 }
@@ -161,6 +161,7 @@ table.t { width: 100%; border-collapse: collapse; }
 /* chart */
 .chart-wrap { padding: 0; }
 .chart-host { position: absolute; inset: 0; }
+.a-chart.chart-expanded, .a-chart:fullscreen { position: fixed; inset: 0; z-index: 10000; width: 100vw; height: 100vh; max-height: none; background: #000; }
 .ohlc { position: absolute; left: 8px; top: 4px; z-index: 3; pointer-events: none; color: var(--text-2); font-size: 11px; }
 .ohlc b { color: var(--amber-dim); font-weight: 500; margin-left: 8px; } .ohlc b:first-child { margin-left: 0; }
 .seg { display: flex; gap: 1px; margin-left: 4px; }
@@ -169,14 +170,6 @@ table.t { width: 100%; border-collapse: collapse; }
 .legend { color: var(--muted); font: 400 11px var(--mono); text-transform: none; letter-spacing: 0; display: flex; gap: 4px; align-items: center; margin-left: 6px; }
 .legend i { display: inline-block; width: 10px; height: 2px; background: var(--c); margin-left: 6px; }
 .legend i.tri { width: 0; height: 0; background: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 7px solid var(--text); }
-
-/* market map */
-.map-wrap { padding: 0; }
-.map-wrap svg { display: block; width: 100%; height: 100%; }
-.map-wrap rect { stroke: #000; stroke-width: 2; }
-.map-wrap rect.trk { stroke: var(--amber); stroke-width: 1.5; }
-.map-wrap text { fill: #fff; font: 600 11px var(--mono); pointer-events: none; }
-.map-wrap text.p { font-weight: 400; fill: rgba(255, 255, 255, .85); }
 
 /* kairos panel */
 .kv-verdict { display: flex; align-items: baseline; gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-bottom: 6px; }

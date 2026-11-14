@@ -147,6 +147,7 @@ class AlphaService:
         return self.j.decode(row)
 
     async def classify_jobs(self):
+        if self.settings.scalper_enabled: return
         if not self.j.state('bootstrap_manifest_registered'): return
         # Bounded batch avoids a model outage preventing later source collection forever.
         for _ in range(8):
@@ -294,6 +295,7 @@ class AlphaService:
         return 'WAITING_EVENT'
 
     async def entries(self):
+        if self.settings.scalper_enabled: return
         version=self.version()
         if not version['enabled']: return
         if not self.ready:
@@ -358,6 +360,7 @@ class AlphaService:
     async def control(self, action):
         async with self.operation_lock:
             if action in ('arm','resume'):
+                if self.settings.scalper_enabled: raise ValueError('The session strategy is active; economic-link entries remain paused')
                 if self.version()['state']=='REVIEW_REQUIRED' or self.j.state('review_required:'+VERSION): raise ValueError('Register a new version after the drawdown review')
                 await self.preflight()
                 if not self.j.state('bootstrap_complete'): raise ValueError('Initial source collection is still running')

@@ -403,6 +403,26 @@ class BrokerCoordinator:
             if str(row['id'])!=intent['owner_id']: raise ValueError('Legacy owner differs from its originating trade')
             if dispatch and not intent['attempted_at'] and intent['effect'] == 'increase' and not self.s.trading_enabled and row.get('mode') != 'manual_option':
                 raise ValueError('Legacy automatic entries are disabled')
+            if dispatch and not intent['attempted_at'] and intent['effect']=='increase' and row.get('mode')=='candle':
+                decision=self.db.one('SELECT * FROM decisions WHERE id=?',[row['decision_id']])
+                dj=(decision or {}).get('decision_json') or {}
+                if (not self.s.scalper_enabled or row['symbol'] not in ('TSLA','AAPL','GOOGL','MSFT','NVDA','AMD','INTC','BTC/USD','ETH/USD','SOL/USD') or row['symbol'] not in self.s.symbols
+                        or not decision or decision['qset_version']!='candles-session-v1'
+                        or time.time()-dj.get('signal_at',0)>25 or time.time()-dj.get('execution_quote_at',0)>5):
+                    raise ValueError('Session entry authorization expired or is disabled')
+                call=self.db.one('SELECT * FROM scalper_calls WHERE id=?',[dj.get('call_id')])
+                answer=((call or {}).get('response_json') or {}).get('answers',{}).get(row['symbol'],{})
+                if (decision['symbol']!=row['symbol'] or decision['action']!=row['side']
+                        or dj.get('model_action')!=row['side'].upper()
+                        or body['side']!=('buy' if row['side']=='long' else 'sell')
+                        or not call or call['state']!='complete' or call['version']!='candles-session-v1'
+                        or call['request_json']['state'].get('strategy')!='candles-session-v1'
+                        or answer.get('choice')!=dj['model_action'] or answer!=(decision.get('answers_json') or {}).get(row['symbol'])
+                        or (answer.get('probabilities') or {}).get(dj['model_action'],0)<.6):
+                    raise ValueError('Session trade is not bound to its exact live model decision')
+                allocation=float(self.snapshot['account'].get('equity') or 0)*.05
+                if float(body['qty'])*float(body.get('limit_price') or 0)>allocation+.000001:
+                    raise ValueError('Session entry exceeds five percent of paper-account equity')
         else:
             with self.db.lock:
                 order = self.db.conn.execute('SELECT * FROM alpha_orders WHERE id=? AND account_id=?', [intent['owner_record'], self.account_id]).fetchone()
@@ -509,6 +529,16 @@ class BrokerCoordinator:
                 if not clock.get('is_open') or timestamp(clock.get('next_close'))<=time.time():
                     raise ValueError('Regular US session is closed')
             now=time.time()
+            if intent['owner_type']=='legacy' and intent['effect']=='increase':
+                trade=self.db.one('SELECT mode FROM trades WHERE id=?',[intent['owner_record']])
+                if trade and trade.get('mode')=='candle':
+                    clock=await self.clock()
+                    from .alpaca import timestamp
+                    crypto=asset_class(body['symbol'])=='crypto'
+                    boundary=clock.get('next_open' if crypto else 'next_close')
+                    if bool(clock.get('is_open'))==crypto or time.time()+35*60>timestamp(boundary):
+                        raise ValueError('The active session changed before dispatch')
+                    now=time.time()
             if asset_class(body['symbol'])!='crypto' and intent['effect']!='protect':
                 from .alpaca import timestamp
                 if not clock.get('is_open') or timestamp(clock.get('next_close'))<=now:
