@@ -250,12 +250,13 @@ export function TradesView() {
                 {ts.map((t) => {
                   const r = isNum(t.r_mult) ? t.r_mult : isNum(t.realized_pnl) && t.risk_usd ? t.realized_pnl / t.risk_usd : null;
                   const mode = t.mode || t.notes;
-                  const partial = t.requested_qty && t.qty < t.requested_qty * (1 - 1e-9);
+                  const filled = t.gross_qty ?? t.qty;
+                  const partial = isNum(filled) && isNum(t.requested_qty) && Number(filled) > 0 && Number(filled) < Number(t.requested_qty) * (1 - 1e-9);
                   return (
                     <tr key={t.id}>
                       <td className="amb">{t.run_id ?? "—"}</td><td className="muted">{dt(t.opened_ts)}</td><td className="sym">{short(t.symbol)}</td><td><span className={`tag ${t.side}`}>{t.side.toUpperCase()}</span></td>
-                      <td>{mode === "exploration" ? <span className="tag xp">EXPLORE</span> : mode === "strict" ? <span className="tag amb">STRICT</span> : ""}</td>
-                      <td className="r">{t.qty}{partial && <span className="tag part" data-tip={`IOC filled ${t.qty} of ${t.requested_qty}`}> PART</span>}</td>
+                      <td>{mode === "candle" ? <span className="tag amb">SESSION</span> : mode === "exploration" ? <span className="tag xp">EXPLORE</span> : mode === "strict" ? <span className="tag amb">STRICT</span> : ""}</td>
+                      <td className="r">{t.qty ?? "—"}{partial && <span className="tag part" data-tip={`Filled ${filled} of ${t.requested_qty}`}> PART</span>}</td>
                       <td className="r muted">{t.ref_price ?? "—"}</td><td className="r">{t.entry_price ?? "—"}</td><td className={`r ${ud(-(t.entry_slip_bp ?? 0))}`}>{isNum(t.entry_slip_bp) ? sg(t.entry_slip_bp, 1) : "—"}</td>
                       <td className="r">{t.tp_price}</td><td className="r">{t.sl_price}</td>
                       <td>{t.status}</td><td>{t.close_reason || ""}</td><td className="r">{isNum(t.exit_price) ? Number(t.exit_price).toPrecision(8) : "—"}</td>
