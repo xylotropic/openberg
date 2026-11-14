@@ -82,7 +82,7 @@ class Engine:
             from .research import AlpacaContext
             self.alpaca = AlpacaPaper(self.session)
             self.feed = AlpacaFeed(self.store, self.alpaca)
-            self.context = AlpacaContext(self.store, self.alpaca)
+            self.context = AlpacaContext(self.store, self.alpaca, self.emit)
         else:
             self.feed = BybitPublicFeed(self.store, self.session)
             self.context = ContextFeed(self.store, self.session)

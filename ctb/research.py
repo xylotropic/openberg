@@ -11,41 +11,100 @@ from urllib.parse import quote
 import aiohttp
 
 from .broker.alpaca import asset_class, timestamp
+from .market.stream import AlpacaStream
 
 
 class AlpacaContext:
-    def __init__(self, store, client):
+    def __init__(self, store, client, emit=None):
         self.store, self.client = store, client
+        self.emit = emit or (lambda *_: None)
         self.on_news = []
         self._stop = asyncio.Event()
+        self.articles = {}
+        self.stream = AlpacaStream(client, 'wss://stream.data.alpaca.markets/v1beta1/news',
+                                   lambda: {'news': ['*']}, self.ingest_message, self.stream_status)
+
+    def stream_status(self, state, error):
+        status = self.store.context.setdefault('news_status', {})
+        status.update(state=state, error=error, changed_at=time.time())
+        self.emit('news', {'status': state})
+        if error:
+            self.store.record_error('newsroom:stream', error)
 
     def stop(self):
         self._stop.set()
+        self.stream.stop()
 
     async def loop(self):
+        tasks = [asyncio.create_task(self.stream.run()), asyncio.create_task(self.backfill_loop())]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def ingest_message(self, item):
+        if item.get('T') == 'n':
+            await self.ingest([item], live=True)
+
+    async def ingest(self, items, *, live=False):
+        additions = []
+        changed = False
+        for item in items:
+            article = dict(item)
+            article.pop('T', None)
+            identity = str(article['id'])
+            old = self.articles.get(identity)
+            if old:
+                # A delayed REST backfill must not overwrite a newer wire correction.
+                if timestamp(article.get('updated_at') or article.get('created_at')) < timestamp(old.get('updated_at') or old.get('created_at')):
+                    continue
+                if article == old:
+                    continue
+            self.articles[identity] = article
+            changed = True
+            if not old:
+                additions.append(identity)
+        if not changed:
+            return
+        ordered = sorted(self.articles.values(), key=lambda n: (timestamp(n.get('created_at')), str(n['id'])), reverse=True)[:500]
+        self.articles = {str(n['id']): n for n in ordered}
+        self.store.context['news_articles'] = ordered
+        now = time.time()
+        old_seen = {n['id']: n['first_seen_ts'] for n in self.store.context.get('news', [])}
+        news = []
+        for item in ordered:
+            syms = item.get('symbols') or []
+            identity = str(item['id'])
+            news.append({'id': identity, 'title': item['headline'], 'source': item.get('source', 'Alpaca news'),
+                         'url': item.get('url'), 'published_at': item.get('created_at'),
+                         'published_ts': timestamp(item.get('created_at')), 'first_seen_ts': old_seen.get(identity, now),
+                         'symbols': [s for s in self.store.symbols if s in syms or s.replace('/', '') in syms],
+                         'market_wide': not syms, 'summary': item.get('summary', '')})
+        self.store.context['news'] = news
+        self.store.context['news_status'] = {**self.store.context.get('news_status', {}), 'last_article_at': now,
+                                             'last_delivery': 'stream' if live else 'backfill'}
+        self.emit('news', {'ids': additions, 'updated': True})
+        for n in news:
+            if n['id'] in additions:
+                for callback in self.on_news:
+                    try:
+                        await callback(n)
+                    except Exception as exc:
+                        self.store.record_error('newsroom:callback', type(exc).__name__)
+
+    async def backfill_loop(self):
         while not self._stop.is_set():
             try:
                 if self.client.configured:
                     result = await self.client.request('GET', '/v1beta1/news', data_api=True,
                                                        params={'limit': 50, 'include_content': 'false', 'sort': 'desc'})
-                    old = {n['id'] for n in self.store.context.get('news', [])}
-                    news = []
-                    for item in result.get('news', []):
-                        syms = item.get('symbols') or []
-                        n = {'id': str(item['id']), 'title': item['headline'], 'source': item.get('source', 'Alpaca news'),
-                             'url': item.get('url'), 'published_at': item.get('created_at'),
-                             'published_ts': timestamp(item.get('created_at')), 'first_seen_ts': time.time(),
-                             'symbols': [s for s in self.store.symbols if s in syms or s.replace('/', '') in syms],
-                             'market_wide': not syms, 'summary': item.get('summary', '')}
-                        news.append(n)
-                        if n['id'] not in old:
-                            for callback in self.on_news:
-                                await callback(n)
-                    self.store.context['news'] = news
+                    await self.ingest(result.get('news', []))
             except Exception as exc:
                 self.store.record_error('newsroom:alpaca', str(exc))
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=60)
+                await asyncio.wait_for(self._stop.wait(), timeout=60 if self.store.context.get('news_status', {}).get('state') != 'live' else 300)
             except asyncio.TimeoutError:
                 pass
 
@@ -143,6 +202,8 @@ class Research:
         if not re.fullmatch(r'[A-Z.]{1,8}', underlying):
             raise ValueError('Enter an equity underlying symbol')
         params = {'feed': 'indicative', 'limit': 100}
+        if not expiry:
+            params['expiration_date_gte'] = datetime.now(timezone.utc).date().isoformat()
         for k, v in [('page_token', page_token), ('expiration_date', expiry), ('type', kind)]:
             if v:
                 params[k] = v

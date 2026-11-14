@@ -13,8 +13,8 @@ const bergoom = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Calibrain Harness",
-  description: "Calibrain Harness: forward-test trading on crypto perpetuals with calibrated classification models (Drex Finance) on Bybit testnet, and measure whether the model has an edge.",
+  title: "Openberg",
+  description: "Stocks, crypto, options, news and SEC filings with Alpaca paper trading.",
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#000000" };

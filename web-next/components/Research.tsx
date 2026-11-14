@@ -11,32 +11,48 @@ const Link = ({ href, children }: { href: string; children: React.ReactNode }) =
 
 export function NewsroomView() {
   const [symbol, setSymbol] = useState("");
+  const [filter, setFilter] = useState("");
+  const [refresh, setRefresh] = useState(0);
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [pages, setPages] = useState<(string | null)[]>([null]);
   const [page, setPage] = useState(0);
-  const load = async (token: string | null = null) => {
+  const news = useStore(s => s.news);
+  const token = pages[page];
+  useEffect(() => {
+    let cancelled = false;
     setBusy(true); setError("");
-    try { setData(await api(`/api/research/news?symbol=${encodeURIComponent(symbol)}${token ? `&page_token=${encodeURIComponent(token)}` : ""}`)); }
-    catch (e: any) { setError(e.message); } finally { setBusy(false); }
-  };
-  useEffect(() => { void load(); }, []);
+    api(`/api/research/news?symbol=${encodeURIComponent(filter)}${token ? `&page_token=${encodeURIComponent(token)}` : ""}`)
+      .then(d => { if (!cancelled) setData(d); })
+      .catch(e => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; };
+  }, [filter, page, token, refresh]);
+  const wanted = filter.split(",").map(s => s.trim().replaceAll("/", "")).filter(Boolean);
+  const merged = new Map((data?.items || []).map((n: Data) => [String(n.id), n]));
+  if (!page) for (const n of news.items || []) {
+    if (wanted.length && !n.symbols?.some((s: string) => wanted.includes(s.replaceAll("/", "")))) continue;
+    const old = merged.get(String(n.id)) as Data | undefined;
+    if (!old || (n.updated_at || "") >= (old.updated_at || "")) merged.set(String(n.id), n);
+  }
+  const items = [...merged.values()].sort((a: any, b: any) => b.created_at.localeCompare(a.created_at)).slice(0, 50) as Data[];
+  const status = news.status || data?.status;
   return <main className="view on research-view">
-    <div className="toolbar"><b>Newsroom</b><span className="tag long">ALPACA NEWS PLUGIN</span>
+    <div className="toolbar"><b>Newsroom</b><span className={`tag ${status?.state === "live" ? "long" : "flat"}`} title={status?.error || undefined}>{status?.state === "live" ? "LIVE" : status?.state?.toUpperCase() || "CONNECTING"}</span><span className="muted">ALPACA WIRE</span>
       <input aria-label="News symbols" placeholder="All markets, or AAPL,BTCUSD" value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} />
-      <button className="kbtn amber" disabled={busy} onClick={() => { setPage(0); setPages([null]); void load(); }}>{busy ? "LOADING…" : "LOAD NEWS"}</button>
+      <button className="kbtn amber" disabled={busy} onClick={() => { setFilter(symbol); setPage(0); setPages([null]); setRefresh(r => r + 1); }}>{busy ? "LOADING…" : "LOAD NEWS"}</button>
 </div>
     <ErrorLine text={error} />
-    <section className="pnl"><div className="ph"><span className="code">WIRE</span>Stocks · crypto · market news<span className="ph-r">{data?.items.length ?? 0} articles · page {page + 1}</span></div>
-      <div className="newsroom-list">{data?.items.map((n: Data) => <article key={n.id}>
+    <section className="pnl"><div className="ph"><span className="code">WIRE</span>Stocks · crypto · market news<span className="ph-r">{items.length} articles · page {page + 1}</span></div>
+      <div className="newsroom-list">{items.map((n: Data) => <article key={n.id}>
         <div className="news-meta">{n.source} · {new Date(n.created_at).toLocaleString()} <span className="amb">{n.symbols?.join(" · ")}</span></div>
         <h3><Link href={n.url}>{n.headline}</Link></h3><p>{n.summary}</p>
       </article>)}</div>
-      {!busy && !error && !data?.items.length && <div className="empty">No articles for this filter.</div>}
+      {!busy && !error && !items.length && <div className="empty">No articles for this filter.</div>}
     </section>
-    <div className="research-pagination"><button className="kbtn" disabled={busy || !page} onClick={() => { const p = page - 1; setPage(p); void load(pages[p]); }}>PREVIOUS</button>
-      <span>PAGE {page + 1}</span><button className="kbtn" disabled={busy || !data?.next_page_token} onClick={() => { const token = data!.next_page_token; setPages([...pages.slice(0, page + 1), token]); setPage(page + 1); void load(token); }}>NEXT</button></div>
+    <div className="research-pagination"><button className="kbtn" disabled={busy || !page} onClick={() => setPage(p => p - 1)}>PREVIOUS</button>
+      <span>PAGE {page + 1}{!page && status?.state === "live" ? " · LIVE" : ""}</span><button className="kbtn" disabled={busy || !data?.next_page_token} onClick={() => { setPages([...pages.slice(0, page + 1), data!.next_page_token]); setPage(page + 1); }}>NEXT</button></div>
   </main>;
 }
 

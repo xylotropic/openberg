@@ -11,9 +11,10 @@ export type State = {
   ov: any | null;
   mon: any | null;
   mkt: any | null;
+  marketError: string | null;
   decisions: any[];
   latest: Record<string, any>;
-  news: { forecasts: any[]; headlines: any[] };
+  news: { forecasts: any[]; headlines: any[]; items?: any[]; status?: { state?: string; error?: string; last_article_at?: number } };
   perf: Record<string, [number, number][]>;
   symbol: string | null;
   tf: string;
@@ -27,7 +28,7 @@ export type State = {
 };
 
 let state: State = {
-  ov: null, mon: null, mkt: null, decisions: [], latest: {}, news: { forecasts: [], headlines: [] }, perf: {},
+  ov: null, mon: null, mkt: null, marketError: null, decisions: [], latest: {}, news: { forecasts: [], headlines: [] }, perf: {},
   symbol: null, tf: "5", view: "mon", ticks: {}, book: null,
   socket: { connected: false, lastMsg: 0, latencyMs: null, msgs: 0 }, modal: null, cmdHint: null,
   rev: { trades: 0, events: 0, eval: 0 },

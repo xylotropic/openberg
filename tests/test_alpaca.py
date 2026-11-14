@@ -15,7 +15,8 @@ from ctb.kairos.client import _error_from
 from ctb.market.alpaca import AlpacaFeed
 from ctb.market.store import MarketStore
 from ctb.models import MODELS
-from ctb.research import Research
+from ctb.research import AlpacaContext, Research
+from ctb.market.stream import AlpacaStream
 from ctb.server import make_app
 
 
@@ -263,6 +264,97 @@ def test_crypto_pair_route_accepts_slashes(tmp_path):
                     async with session.get(f'http://127.0.0.1:{port}/api/market/{path}?tf=5') as resp:
                         assert resp.status == 200
                         assert (await resp.json())['symbol'] == 'ETH/USD'
+        finally:
+            await runner.cleanup()
+    asyncio.run(run())
+
+
+def test_default_option_chain_excludes_expired_contracts():
+    from datetime import datetime, timezone
+    captured = []
+    class DataClient:
+        async def request(self, *_args, **kwargs):
+            captured.append(kwargs['params'])
+            return {'snapshots': {}}
+    async def run():
+        r = Research(None, DataClient())
+        await r.options('SPY')
+        assert captured[-1]['expiration_date_gte'] == datetime.now(timezone.utc).date().isoformat()
+        await r.options('SPY', expiry='2026-11-20')
+        assert captured[-1]['expiration_date'] == '2026-11-20'
+        assert 'expiration_date_gte' not in captured[-1]
+    asyncio.run(run())
+
+
+def test_news_wire_deduplicates_and_preserves_newer_corrections():
+    async def run():
+        store = MarketStore(['AAPL', 'BTC/USD'])
+        emits, callbacks = [], []
+        ctx = AlpacaContext(store, None, lambda *args: emits.append(args))
+        async def seen(n): callbacks.append(n)
+        ctx.on_news.append(seen)
+        item = {'id': 42, 'headline': 'Initial headline', 'source': 'benzinga', 'symbols': ['AAPL', 'MSFT'],
+                'created_at': '2026-11-13T20:00:00Z', 'updated_at': '2026-11-13T20:00:00Z', 'summary': ''}
+        await ctx.ingest([item])
+        first_seen = store.context['news'][0]['first_seen_ts']
+        await ctx.ingest([item])
+        assert len(emits) == len(callbacks) == 1
+        corrected = {**item, 'headline': 'Corrected headline', 'updated_at': '2026-11-13T20:01:00Z'}
+        await ctx.ingest_message({'T': 'n', **corrected})
+        await ctx.ingest([item])  # A stale REST page arrives after the wire correction.
+        assert ctx.articles['42']['headline'] == 'Corrected headline'
+        assert len(store.context['news']) == 1 and len(callbacks) == 1 and len(emits) == 2
+        assert store.context['news'][0]['first_seen_ts'] == first_seen
+        assert store.context['news'][0]['symbols'] == ['AAPL']
+        assert store.context['news_articles'][0]['symbols'] == ['AAPL', 'MSFT']
+        assert store.context['news_status']['last_delivery'] == 'stream'
+    asyncio.run(run())
+
+
+def test_news_cache_keeps_wire_stories_missing_from_backfill():
+    async def run():
+        store = MarketStore(['BTC/USD'])
+        ctx = AlpacaContext(store, None)
+        def article(i):
+            return {'id': i, 'headline': str(i), 'source': 'fiscal.ai', 'symbols': ['BTCUSD'],
+                    'created_at': f'2026-11-13T20:{i:02}:00Z'}
+        await ctx.ingest([article(2)], live=True)
+        await ctx.ingest([article(1)])
+        assert [n['id'] for n in store.context['news']] == ['2', '1']
+        assert all(n['symbols'] == ['BTC/USD'] and n['source'] == 'fiscal.ai' for n in store.context['news'])
+    asyncio.run(run())
+
+
+def test_stream_requires_subscription_and_recovers_disconnect():
+    async def run():
+        connections, states, received = [], [], []
+        async def handler(req):
+            assert req.headers['APCA-API-KEY-ID'] == 'test-key'
+            ws = web.WebSocketResponse(); await ws.prepare(req)
+            connections.append(ws)
+            await ws.send_json([{'T': 'success', 'msg': 'authenticated'}])
+            sub = await ws.receive_json()
+            assert sub == {'action': 'subscribe', 'news': ['*']}
+            await ws.send_json([{'T': 'subscription', 'news': ['*']}])
+            if len(connections) == 1:
+                await ws.close()
+            else:
+                await ws.send_json([{'T': 'n', 'id': 42}])
+                await ws.receive()
+            return ws
+        app = web.Application(); app.router.add_get('/stream', handler)
+        runner = web.AppRunner(app); await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 0); await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        try:
+            async with aiohttp.ClientSession() as session:
+                async def message(n): received.append(n); stream.stop()
+                stream = AlpacaStream(AlpacaPaper(session, key='test-key', secret='test-secret'),
+                                      f'http://127.0.0.1:{port}/stream', lambda: {'news': ['*']},
+                                      message, lambda state, error: states.append(state))
+                await asyncio.wait_for(stream.run(), timeout=5)
+                assert received == [{'T': 'n', 'id': 42}]
+                assert states.count('live') == 2 and 'reconnecting' in states
         finally:
             await runner.cleanup()
     asyncio.run(run())

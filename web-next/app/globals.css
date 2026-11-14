@@ -53,7 +53,6 @@ button { font: inherit; cursor: pointer; }
 /* ---------- command bar */
 .cmdbar { display: flex; align-items: stretch; gap: 10px; background: var(--bar-2); border-bottom: 1px solid var(--line); padding: 5px 10px; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 8px; }
-.brand-mark { background: var(--amber); color: #000; font: 700 12px var(--cond); padding: 2px 5px; letter-spacing: .08em; }
 .brand-name { font: 700 14px var(--cond); letter-spacing: .12em; color: var(--text); white-space: nowrap; }
 .cmd { flex: 1; display: flex; min-width: 260px; border: 1px solid var(--line); background: #000; }
 .cmd-sec { background: var(--amber); color: #000; font-weight: 600; padding: 4px 8px; white-space: nowrap; }
@@ -112,7 +111,7 @@ button { font: inherit; cursor: pointer; }
 @media (max-width: 760px) {
   .grid-mon { grid-template-columns: minmax(0, 1fr); grid-template-areas: "chart" "mon" "kai" "acct" "book" "perf" "map" "news" "tape" "stats" "log"; }
   .a-mon, .a-kai { height: auto; }
-  .brand-name { display: none; } .venue { display: none; }
+  .venue { display: none; }
 }
 
 /* tables */
@@ -298,11 +297,10 @@ dialog.keys { width: min(640px, 95vw); }
 .pb.tight > .t td:first-child, .pb.tight > .t th:first-child { padding-left: 10px; }
 .pb.tight > .t td:last-child, .pb.tight > .t th:last-child { padding-right: 10px; }
 
-/* ---------- Calibrain Harness brand */
-.brand .brand-svg { display: block; flex: none; }
+/* ---------- Openberg */
 .brand .brand-name { font: 600 15px/1 var(--cond); letter-spacing: -.01em; color: #fff; white-space: nowrap; }
-.brand .brand-name i { font-style: normal; font-weight: 400; color: #8e8e93; }
-.brand .brand-tag { font: 600 9px var(--mono); color: var(--amber); border: 1px solid var(--amber-dim); padding: 0 4px; letter-spacing: .08em; }
+.chart-message { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: var(--muted); }
+.chart-message.error { color: var(--down); }
 
 /* VALID screen and STRATEGY dialog */
 .vchip { font: 600 11px var(--cond); letter-spacing: .05em; padding: 0 5px; border: 1px solid var(--line); }

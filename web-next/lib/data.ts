@@ -17,9 +17,13 @@ export async function loadMonitor() {
 export async function loadMarket() {
   const { symbol, tf } = getState();
   if (!symbol) return;
-  const mkt = await api(`/api/market/${encodeURIComponent(symbol)}?tf=${tf}`);
-  // drop a stale response if the user switched symbol/timeframe meanwhile
-  if (getState().symbol === mkt.symbol && getState().tf === mkt.tf) setState({ mkt });
+  try {
+    const mkt = await api(`/api/market/${encodeURIComponent(symbol)}?tf=${tf}`);
+    // Drop a stale response if the user switched symbol/timeframe meanwhile.
+    if (getState().symbol === symbol && getState().tf === tf) setState({ mkt, marketError: null });
+  } catch (e: any) {
+    if (getState().symbol === symbol && getState().tf === tf) setState({ marketError: e.message });
+  }
 }
 export async function loadDecisions() {
   const decisions = await api<any[]>("/api/decisions?limit=400");
@@ -35,12 +39,14 @@ export async function loadNews() {
 }
 
 export function selectSymbol(symbol: string) {
-  setState({ symbol, mkt: null });
+  if (getState().symbol === symbol) return;
+  setState({ symbol, mkt: null, book: null, marketError: null });
   sendWatch();
   loadMarket().catch(() => {});
 }
 export function selectTf(tf: string) {
-  setState({ tf });
+  if (getState().tf === tf) return;
+  setState({ tf, mkt: null, marketError: null });
   sendWatch();
   loadMarket().catch(() => {});
 }

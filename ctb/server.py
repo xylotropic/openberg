@@ -110,7 +110,19 @@ def make_app(engine: Engine) -> web.Application:
 
     @routes.get("/api/research/news")
     async def research_news(req):
-        return await research_response(lambda: research_plugins().newsroom(req.query.get("symbol", ""), req.query.get("page_token")))
+        async def get():
+            result = await research_plugins().newsroom(req.query.get("symbol", ""), req.query.get("page_token"))
+            if not req.query.get("page_token"):
+                items = {str(n['id']): n for n in result['items']}
+                wanted = {s.strip().replace('/', '').upper() for s in req.query.get('symbol', '').split(',') if s.strip()}
+                for n in reversed(engine.store.context.get('news_articles', [])):
+                    if not wanted or wanted.intersection(s.replace('/', '').upper() for s in n.get('symbols', [])):
+                        if str(n['id']) not in items or n.get('updated_at', '') >= items[str(n['id'])].get('updated_at', ''):
+                            items[str(n['id'])] = n
+                result['items'] = sorted(items.values(), key=lambda n: n.get('created_at', ''), reverse=True)[:50]
+            result["status"] = engine.store.context.get("news_status", {})
+            return result
+        return await research_response(get)
 
     @routes.get("/api/research/filings")
     async def research_filings(req):
@@ -255,7 +267,9 @@ def make_app(engine: Engine) -> web.Application:
     @routes.get("/api/news")
     async def news(_: web.Request) -> web.Response:
         forecasts = engine.db.query("SELECT * FROM news ORDER BY ts DESC LIMIT 200")
-        return j({"headlines": engine.store.context.get("news", [])[:60], "forecasts": forecasts})
+        return j({"headlines": engine.store.context.get("news", [])[:60], "forecasts": forecasts,
+                  "items": engine.store.context.get("news_articles", [])[:100],
+                  "status": engine.store.context.get("news_status", {})})
 
     @routes.get("/api/events")
     async def events(_: web.Request) -> web.Response:

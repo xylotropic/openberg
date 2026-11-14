@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   createChart, type IChartApi, type ISeriesApi, type SeriesMarker, type Time, type UTCTimestamp,
 } from "lightweight-charts";
-import { setBarSink, useStore, type Bar } from "@/lib/store";
+import { getState, setBarSink, useStore, type Bar } from "@/lib/store";
 import { cssVar, decimalsOf, fx, SERIES_C, sg, short, ud, usd } from "@/lib/format";
 
 type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number };
@@ -38,6 +38,9 @@ export function PriceChart() {
   const [ohlc, setOhlc] = useState<Candle | null>(null);
   const [pd, setPd] = useState(2);
   const mkt = useStore((s) => s.mkt);
+  const marketError = useStore((s) => s.marketError);
+  const symbol = useStore((s) => s.symbol);
+  const tf = useStore((s) => s.tf);
   const decisions = useStore((s) => s.decisions);
 
   useEffect(() => {
@@ -72,11 +75,21 @@ export function PriceChart() {
   // full reload when the symbol/timeframe (or its REST snapshot) changes
   useEffect(() => {
     const a = api.current;
-    if (!a || !mkt?.bars?.length) return;
+    if (!a) return;
+    if (!mkt?.bars?.length) {
+      setBarSink(null);
+      key.current = "";
+      bars.current = [];
+      byTime.current.clear();
+      a.candles.setMarkers([]);
+      [a.candles, a.e20, a.e50, a.vol].forEach(series => series.setData([]));
+      setOhlc(null);
+      return;
+    }
     const k = `${mkt.symbol}:${mkt.tf}`;
     const reset = k !== key.current;
     key.current = k;
-    const d = Math.max(decimalsOf(mkt.ticker.lastPrice), 0);
+    const d = Math.max(decimalsOf(mkt.ticker.lastPrice), 2);
     setPd(d);
     const pf = { type: "price" as const, precision: d, minMove: Math.pow(10, -d) };
     a.candles.applyOptions({ priceFormat: pf });
@@ -91,11 +104,15 @@ export function PriceChart() {
     a.candles.setData(b.map((x) => ({ time: x.time as UTCTimestamp, open: x.open, high: x.high, low: x.low, close: x.close })));
     a.vol.setData(b.map(volPoint));
     drawEmas();
-    if (reset) a.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, b.length - 140), to: b.length + 4 });
+    if (reset) {
+      a.chart.priceScale("right").applyOptions({ autoScale: true });
+      a.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, b.length - 140), to: b.length + 4 });
+    }
     setOhlc(b[b.length - 1]);
 
     setBarSink((bar: Bar) => {
       if (bar.symbol !== mkt.symbol || bar.tf !== mkt.tf || !api.current) return;
+      if (bar.symbol !== getState().symbol || bar.tf !== getState().tf) return;
       const arr = bars.current, last = arr[arr.length - 1];
       if (last && bar.time < last.time) return;
       const c: Candle = { time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume };
@@ -138,8 +155,9 @@ export function PriceChart() {
 
   const chg = ohlc ? ohlc.close - ohlc.open : 0;
   return (
-    <div className="pb chart-wrap">
-      <div ref={host} className="chart-host" />
+    <div className="pb chart-wrap" data-symbol={mkt?.symbol} data-timeframe={mkt?.tf}>
+      <div ref={host} className="chart-host" role="img" aria-label={`${symbol} ${tf} minute candlestick chart`} />
+      {(marketError || !mkt?.bars?.length) && <div className={`chart-message${marketError ? " error" : ""}`} role="status">{marketError || (mkt ? `No bars for ${symbol}` : `Loading ${symbol}…`)}</div>}
       {ohlc && (
         <div className="ohlc">
           <b>O</b> {fx(ohlc.open, pd)} <b>H</b> {fx(ohlc.high, pd)} <b>L</b> {fx(ohlc.low, pd)} <b>C</b> <span className={ud(chg)}>{fx(ohlc.close, pd)}</span> <b>V</b> {usd(ohlc.volume)}{" "}

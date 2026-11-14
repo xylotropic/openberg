@@ -35,17 +35,6 @@ export function Clocks() {
   );
 }
 
-/** The Calibrain Harness mark, inline so it costs no request (same geometry as docs/brand/calibrain-harness-mark-dark.svg):
- * a flat-capped C and the one calibrated point that closes it. */
-function BrandMark() {
-  return (
-    <svg className="brand-svg" viewBox="0 0 64 64" width="20" height="20" aria-hidden="true">
-      <path d="M 46.849 17.151 A 21 21 0 1 0 46.849 46.849" fill="none" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="butt" />
-      <rect x="49" y="28" width="8" height="8" fill="#FF8A1F" />
-    </svg>
-  );
-}
-
 const PLACEHOLDER = "BTC · ETH · SOL · ASK · EVAL · KEYS · HELP";
 
 export function CommandBar() {
@@ -107,10 +96,8 @@ export function CommandBar() {
 
   return (
     <header className="cmdbar">
-      <div className="brand" title="Calibrain Harness · forward-testing harness for classification models (under development)">
-        <BrandMark />
-        <span className="brand-name">Calibrain <i>Harness</i></span>
-        <span className="brand-tag">BETA</span>
+      <div className="brand">
+        <span className="brand-name">Openberg</span>
       </div>
       <form className="cmd" autoComplete="off" onSubmit={onSubmit}>
         <span className="cmd-sec">{symbol ?? "—"}</span>
