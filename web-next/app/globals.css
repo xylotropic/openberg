@@ -34,6 +34,25 @@
   --cond: "Avenir 85 Heavy", "Avenir", sans-serif;
 }
 * { box-sizing: border-box; }
+.alpha-view > .pnl, .alpha-columns { margin-top: 8px; }
+.alpha-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
+.alpha-stats { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); border: 1px solid var(--line); margin-top: 8px; }
+.alpha-stats > div { padding: 8px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); min-width: 0; }
+.alpha-stats label { display: block; color: var(--amber); font: 11px var(--cond); }
+.alpha-stats strong { display: block; overflow-wrap: anywhere; font: 500 15px var(--mono); margin-top: 4px; }
+.alpha-metrics { display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 10px; color: var(--muted); }
+.alpha-metrics b { color: var(--text); }
+.alpha-scroll { overflow: auto; max-height: 360px; }
+.alpha-scroll table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+.alpha-scroll th { font-family: var(--cond); color: var(--muted); text-align: left; }
+.alpha-scroll th, .alpha-scroll td { padding: 5px 9px; border-bottom: 1px solid var(--line); }
+.alpha-nav-chart { width: 100%; max-height: 210px; font-family: var(--mono); }
+.alpha-notes { border-top: 1px solid var(--line); padding: 8px; color: var(--muted); }
+.alpha-notes summary { cursor: pointer; font-family: var(--cond); color: var(--text-2); }
+.alpha-detail { position: fixed; inset: 15% 5% 8%; z-index: 40; box-shadow: 0 0 0 100vmax #000b; }
+.alpha-detail > a { padding: 8px; }
+.alpha-detail pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; margin: 0; font: 13px/1.5 var(--mono); }
+@media (max-width: 1100px) { .alpha-stats { grid-template-columns: repeat(3,minmax(0,1fr)); } .alpha-columns { grid-template-columns: 1fr; } }
 html, body { background: var(--bg); }
 body { margin: 0; color: var(--text); font: 12px/1.35 var(--mono); font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; padding-bottom: 26px; }
 a { color: var(--amber); text-decoration: none; } a:hover { text-decoration: underline; }

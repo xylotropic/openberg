@@ -117,6 +117,7 @@ class Settings:
     kairos_concurrency: int = _i("CTB_KAIROS_CONCURRENCY", 6)  # simultaneous requests at a bar close
     kairos_news_enabled: bool = _b("CTB_KAIROS_NEWS", True)
     kairos_news_max_per_hour: int = _i("CTB_KAIROS_NEWS_MAX_RPH", 20)
+    alpha_monthly_model_usd: float = _f('CTB_ALPHA_MONTHLY_MODEL_USD',2)
 
     # --- bracket geometry (multiples of decision-timeframe ATR) ---
     sl_atr: float = _f("CTB_SL_ATR", 1.5)

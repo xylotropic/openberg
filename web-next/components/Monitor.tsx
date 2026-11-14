@@ -301,7 +301,7 @@ function Account() {
                   <td className="sym">{short(x.symbol)}</td><td><span className={`tag ${x.side}`}>{x.side.toUpperCase()}</span></td>
                   <td className="r">{x.size}</td><td className="r">{x.entry}</td><td className="r">{x.mark}</td>
                   <td className={`r ${ud(x.upnl)}`}>{sg(x.upnl)}</td><td className="r">{x.sl || <span className="dn">NONE</span>}</td><td className="r">{x.tp || "—"}</td>
-                  <td>{x.owned ? <button className="mini" onClick={() => closePos(x.symbol)}>CLOSE</button> : <span className="muted">EXTERNAL</span>}</td>
+                  <td>{x.owner === "alpha" ? <button className="mini" onClick={() => setState({ view: "alpha" })}>ALPHA</button> : x.owned ? <button className="mini" onClick={() => closePos(x.symbol)}>CLOSE</button> : <span className="muted">{x.owner === "manual" ? "MANUAL" : "EXTERNAL"}</span>}</td>
                 </tr>
               ))}
             </tbody>

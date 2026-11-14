@@ -90,6 +90,13 @@ def main():
             run('launchctl', 'bootout', DOMAIN, str(PLIST), check=False)
         stop_checkout_listener()
         database = RUNTIME / 'data/alpaca.db'
+        if database.exists():
+            backups=RUNTIME/'data/backups'
+            backups.mkdir(mode=0o700,exist_ok=True)
+            backup=backups/('before-'+release.name+'-'+str(int(time.time()))+'.db')
+            with sqlite3.connect(database) as src,sqlite3.connect(backup) as dst:
+                src.backup(dst)
+            backup.chmod(0o600)
         if not database.exists():
             source = ROOT / 'data/alpaca.db'
             if source.exists():

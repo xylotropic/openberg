@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -49,9 +50,41 @@ class RateBudget:
     def __init__(self, per_hour: int):
         self.per_hour = per_hour
         self.calls: deque[float] = deque()
+        self.db=None;self.namespace=None
+
+    def bind(self, db, namespace):
+        """Persist reservations; initialize once from the existing request history."""
+        self.db,self.namespace=db,namespace
+        with db.lock:
+            db.conn.execute('CREATE TABLE IF NOT EXISTS model_budget_calls(id TEXT PRIMARY KEY,namespace TEXT,ts REAL)')
+            db.conn.execute('CREATE INDEX IF NOT EXISTS model_budget_hour ON model_budget_calls(namespace,ts)')
+            db.conn.execute('CREATE TABLE IF NOT EXISTS model_budget_seed(namespace TEXT PRIMARY KEY,at REAL)')
+            if not db.conn.execute('SELECT namespace FROM model_budget_seed WHERE namespace=?',[namespace]).fetchone():
+                db.conn.execute('BEGIN IMMEDIATE')
+                try:
+                    for at in self.calls: db.conn.execute('INSERT INTO model_budget_calls VALUES(?,?,?)',[uuid.uuid4().hex,namespace,at])
+                    db.conn.execute('INSERT INTO model_budget_seed VALUES(?,?)',[namespace,time.time()])
+                    db.conn.execute('COMMIT')
+                except BaseException:
+                    db.conn.execute('ROLLBACK');raise
 
     def try_take(self) -> bool:
         now = time.time()
+        if self.db is not None:
+            with self.db.lock:
+                nested=self.db.conn.in_transaction
+                if not nested: self.db.conn.execute('BEGIN IMMEDIATE')
+                try:
+                    used=self.db.conn.execute('SELECT COUNT(*) FROM model_budget_calls WHERE namespace=? AND ts>?',[self.namespace,now-3600]).fetchone()[0]
+                    if used>=self.per_hour:
+                        if not nested: self.db.conn.execute('COMMIT')
+                        return False
+                    self.db.conn.execute('INSERT INTO model_budget_calls VALUES(?,?,?)',[uuid.uuid4().hex,self.namespace,now])
+                    if not nested: self.db.conn.execute('COMMIT')
+                except BaseException:
+                    if not nested: self.db.conn.execute('ROLLBACK')
+                    raise
+            return True
         while self.calls and now - self.calls[0] > 3600:
             self.calls.popleft()
         if len(self.calls) >= self.per_hour:
@@ -61,6 +94,9 @@ class RateBudget:
 
     def used(self) -> int:
         now = time.time()
+        if self.db is not None:
+            with self.db.lock:
+                return self.db.conn.execute('SELECT COUNT(*) FROM model_budget_calls WHERE namespace=? AND ts>?',[self.namespace,now-3600]).fetchone()[0]
         return sum(1 for t in self.calls if now - t <= 3600)
 
 

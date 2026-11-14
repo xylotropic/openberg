@@ -28,6 +28,7 @@ class AlpacaExecutor(Executor):
         self.raw_positions = []
         self.clock: dict = {}
         self.kill_requested = False
+        self.coordinator = None
         from .manual import ManualTrading
         self.manual = ManualTrading(self)
 
@@ -70,12 +71,28 @@ class AlpacaExecutor(Executor):
         return str(order.get('symbol', '')).replace('/', '')
 
     def manual_pending(self, symbol):
+        if self.coordinator and self.coordinator.conflict([symbol], 'legacy', ''):
+            # Entry calls have no trade owner yet. Every existing lease blocks a new trade.
+            return True
         if self.db.one('SELECT resource FROM manual_ownership WHERE account_id=? AND resource=? LIMIT 1',
                        [self.account_id, symbol.replace('/', '')]):
             return True
         return any(self._order_symbol(r) == symbol.replace('/', '') for r in self.db.query(
             "SELECT symbol FROM manual_orders WHERE account_id=? AND attempted_ts IS NOT NULL "
             "AND status NOT IN ('filled','canceled','expired','rejected','replaced')", [self.account_id]))
+
+    async def submit_order(self, trade, body, effect):
+        if self.coordinator:
+            try:
+                return await self.coordinator.legacy_submit(trade, body, effect)
+            except ValueError as exc:
+                raise AlpacaError(422, str(exc)) from None
+        return await self.client.submit(body)
+
+    async def cancel_order(self, trade, order):
+        if self.coordinator:
+            return await self.coordinator.legacy_cancel(trade, order)
+        return await self.client.cancel(order)
 
     def ownership_ok(self, t, position) -> bool:
         if not position:
@@ -147,13 +164,13 @@ class AlpacaExecutor(Executor):
             body = {"symbol": symbol, "qty": format(Decimal(str(qty)), 'f'), "side": "buy" if buy else "sell", "type": "limit",
                     "limit_price": str(price), "time_in_force": "gtc" if kind == 'crypto' else "day", "client_order_id": link}
             try:
-                order = await self.client.submit(body)
+                order = await self.submit_order(self.db.one('SELECT * FROM trades WHERE id=?', [t_id]), body, 'increase')
                 until = time.time() + (self.s.maker_wait_s if maker else 5)
                 while order['status'] not in TERMINAL and time.time() < until:
                     await asyncio.sleep(.5)
                     order = await self.client.order(link)
                 if order['status'] not in TERMINAL:
-                    await self.client.cancel(order)
+                    await self.cancel_order(self.db.one('SELECT * FROM trades WHERE id=?', [t_id]), order)
                     # Cancellation is asynchronous. Never assume unfilled shares cannot still fill.
                     for _ in range(20):
                         order = await self.client.order(link)
@@ -231,9 +248,9 @@ class AlpacaExecutor(Executor):
             except AlpacaError as exc:
                 if exc.status != 404:
                     raise
-                order = await self.client.submit({"symbol": t['symbol'], "qty": format(Decimal(str(t['qty'])), 'f'),
+                order = await self.submit_order(t, {"symbol": t['symbol'], "qty": format(Decimal(str(t['qty'])), 'f'),
                     "side": "buy" if buy else "sell", "type": "stop_limit", "stop_price": str(round(stop, 2)),
-                    "limit_price": str(round(limit, 2)), "time_in_force": "gtc", "client_order_id": link})
+                    "limit_price": str(round(limit, 2)), "time_in_force": "gtc", "client_order_id": link}, 'protect')
             self.db.update('trades', t['id'], {"stop_order_id": order['id'], "backstop_price": stop,
                 "protection": "Alpaca stop-limit backstop; managed stop/target/time exit"})
         except Exception as exc:
@@ -262,10 +279,10 @@ class AlpacaExecutor(Executor):
         self.db.update('trades', t['id'], {'status': 'closing', 'exit_link_id': link,
             'exit_links_json': links, 'exit_attempt_ts': time.time()})
         try:
-            await self.client.submit({'symbol': t['symbol'], 'qty': format(Decimal(str(qty)), 'f'),
+            await self.submit_order(t, {'symbol': t['symbol'], 'qty': format(Decimal(str(qty)), 'f'),
                 'side': 'sell' if t['side'] == 'long' else 'buy', 'type': 'market',
                 'time_in_force': 'gtc' if asset_class(t['symbol']) == 'crypto' else 'day', 'client_order_id': link,
-                **({'position_intent': 'sell_to_close'} if asset_class(t['symbol']) == 'option' else {})})
+                **({'position_intent': 'sell_to_close'} if asset_class(t['symbol']) == 'option' else {})}, 'reduce')
         except Exception as exc:
             # Retain the exact client id even when the HTTP result is ambiguous.
             self.db.event('warn', 'exit_pending', str(exc)[:300], t['symbol'])
@@ -292,6 +309,10 @@ class AlpacaExecutor(Executor):
         # A terminal partial fill gets a new id for the remaining quantity. A missing response
         # is retried with the SAME id, which Alpaca rejects if it already accepted the order.
         last_found = any(o.get('client_order_id') == t.get('exit_link_id') for o in orders)
+        if self.coordinator and t.get('exit_link_id'):
+            intent=self.coordinator.one('SELECT * FROM execution_intents WHERE account_id=? AND owner_type=? AND owner_record=? AND client_order_id=?',
+                [self.account_id,'legacy',str(t['id']),t['exit_link_id']])
+            last_found=last_found or bool(intent and intent['status'] in ('rejected','canceled','expired'))
         await self._submit_exit(t, remaining, new=bool(links and last_found))
         return False
 
@@ -305,7 +326,7 @@ class AlpacaExecutor(Executor):
                 try:
                     order = await self.client.order(t['entry_link_id'])
                     if order['status'] not in TERMINAL:
-                        await self.client.cancel(order)
+                        await self.cancel_order(t, order)
                 except AlpacaError as exc:
                     if exc.status != 404:
                         raise
@@ -325,7 +346,7 @@ class AlpacaExecutor(Executor):
                 return False
             stop = next((o for o in exits if o.get('client_order_id') == f"{t['entry_link_id']}-stop"), None)
             if stop and stop['status'] not in TERMINAL:
-                await self.client.cancel(stop)
+                await self.cancel_order(t, stop)
                 for _ in range(20):
                     stop = await self.client.order(f"{t['entry_link_id']}-stop")
                     if stop['status'] in TERMINAL:
@@ -358,6 +379,11 @@ class AlpacaExecutor(Executor):
         while True:
             try:
                 await self.sync()
+                if self.coordinator:
+                    try:
+                        await self.coordinator.reconcile()
+                    except Exception as exc:
+                        self.db.event('warn', 'execution_reconcile', type(exc).__name__)
                 if not self.sync_error:
                     try:
                         await self.manual.refresh()
@@ -372,7 +398,7 @@ class AlpacaExecutor(Executor):
                         order = await self.client.order(t['entry_link_id'])
                         if order['status'] not in TERMINAL and (t['deadline_ts'] <= time.time() or
                                 (asset_class(t['symbol']) != 'option' and time.time() - t['opened_ts'] > self.s.maker_wait_s + 10)):
-                            await self.client.cancel(order)
+                            await self.cancel_order(t, order)
                         await self.resolve_entry(t, order)
                     elif t['status'] == 'closing':
                         await self.continue_close(t)
@@ -436,6 +462,14 @@ class AlpacaExecutor(Executor):
             p.update(owned=bool(t), sl=t.get('sl_price') if t else None, tp=t.get('tp_price') if t else None)
             raw = next((r for r in self.raw_positions if r['symbol'].replace('/', '') == p['symbol'].replace('/', '')), {})
             p['available_qty'] = str(abs(Decimal(str(raw.get('qty_available', raw.get('qty', p['size']))))))
+            p['owner']='legacy' if t else 'external'
+            if self.coordinator:
+                lease=self.coordinator.one('SELECT owner_type,owner_id FROM execution_leases WHERE account_id=? AND resource=?',[self.account_id,p['symbol'].replace('/','')])
+                if lease:
+                    p['owner']=lease['owner_type']
+                    if lease['owner_type']=='alpha':
+                        row=self.db.one('SELECT exit_deadline FROM alpha_groups WHERE id=?',[lease['owner_id']])
+                        p['strategy_exit']=row['exit_deadline'] if row else None
         return {**view, "venue": "alpaca", "account_id": self.account_id, "currency": "USD", "paper": True,
                 "options_trading_level": self.account.get('options_trading_level'), "market_clock": self.clock,
                 "pnl_basis": "gross broker fills; fees unavailable"}
@@ -474,8 +508,8 @@ class AlpacaExecutor(Executor):
                 'planned_sl_bp': 10000, 'planned_tp_bp': 10000, 'ref_price': limit_price, 'risk_usd': premium,
                 'entry_mode': 'limit', 'mode': 'manual_option', 'run_id': self.run_id_fn(),
                 'notes': 'Explicit paper long option; entire debit at risk; free indicative market data'})
-            order = await self.client.submit({'symbol': symbol, 'qty': str(qty), 'side': 'buy', 'type': 'limit',
+            order = await self.submit_order(self.db.one('SELECT * FROM trades WHERE id=?',[tid]), {'symbol': symbol, 'qty': str(qty), 'side': 'buy', 'type': 'limit',
                 'limit_price': str(round(limit_price, 2)), 'time_in_force': 'day', 'position_intent': 'buy_to_open',
-                'client_order_id': link})
+                'client_order_id': link}, 'increase')
             self.db.update('trades', tid, {'entry_order_id': order['id']})
             return {'ok': True, 'trade_id': tid, 'order_id': order['id'], 'status': order['status'], 'paper': True}

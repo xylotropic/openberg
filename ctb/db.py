@@ -186,7 +186,8 @@ class DB:
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(SCHEMA)
         self._migrate()
-        self.lock = threading.Lock()
+        # Journal helpers share atomic transactions and can call other locked readers.
+        self.lock = threading.RLock()
 
     def _migrate(self) -> None:
         mcols = {r[1] for r in self.conn.execute('PRAGMA table_info(manual_orders)')}

@@ -20,8 +20,9 @@ Openberg combines a dense market monitor, live order books, manual order entry, 
 | F8 | Filings | SEC issuer lookup, all form types, older archives, original documents and filing indexes |
 | F9 | Trade | Manual paper Buy/Sell, market/limit orders, review, positions, fills, cancellation |
 | F10 | Surfaces | Interactive option surfaces, point clouds, IV smiles, near-spot term structure |
+| F11 | Alpha | Economic-link paper experiment, evidence, ownership, exit obligations, marked NAV, model spend |
 
-Type a ticker in the command bar to select it. Commands include `ASK`, `TRADE`, `BUY`, `SELL`, `NEWS`, `OPTIONS`, `FILINGS`, `KEYS`, `STRAT`, and `UNIV`.
+Type a ticker in the command bar to select it. Commands include `ASK`, `TRADE`, `BUY`, `SELL`, `NEWS`, `OPTIONS`, `FILINGS`, `ALPHA`, `KEYS`, `STRAT`, and `UNIV`.
 
 ### Watchlist and charts
 
@@ -92,6 +93,21 @@ The inherited harness includes calibrated classification questions, mirrored con
 
 Automatic trading starts **off**. The active Alpaca adapter uses native stop-limit backstops and managed exits for model positions. Automatic option entries remain disabled with indicative data. Stock forecast windows do not cross the market close; overnight gaps are excluded from applicable base-rate windows. Resting limit entries cannot guarantee maker execution.
 
+### Economic-link paper experiment
+
+The **F11 / ALPHA** screen runs a separate, versioned experiment. It tests sustained customer-demand changes against previously documented supplier relationships. This experiment has its own persisted arm/pause switch. It does not use the intraday AUTO-TRADE switch.
+
+- Initial graph: SEC disclosures for Apple, Skyworks and Cirrus Logic. A named customer and explicit material revenue exposure are required.
+- Fresh SEC earnings disclosures can qualify after dated relationship, comparison, mechanism and persistence checks. Bootstrap filings cannot create trades.
+- Drex Finance supplies bounded evidence probabilities. It does not choose quantities, issue broker commands or predict a probability of profit.
+- Up to $10,000 in explicitly unencumbered paper capital. Stock/sector-ETF pairs use lagged risk estimates and fixed company, event, sector, gross, net and beta caps.
+- Regular-session entries at open plus 30 minutes or close minus 30 minutes. The holding deadline is close minus 30 minutes on the tenth subsequent exchange session.
+- All manual, intraday and economic-link orders pass through one process-locked coordinator with durable origin records, symbol leases and capacity commitments.
+- Fills, source versions, decisions, cost assumptions and daily marked NAV remain separate from intraday calibration. Shadow experiments cannot promote themselves.
+- The experiment's model ceiling is $2 per month, or a lower configured ceiling, within the existing shared hourly budget. No subscriptions or top-ups are enabled.
+
+This is an **unvalidated forward paper experiment**. A narrow graph and strict gates can produce no trades for long periods. Corporate-action data can arrive late. Unsupported noncash actions block new exposure and retain explicit accounting gaps. See the [strategy specification and operating limits](docs/ECONOMIC_LINKS.md).
+
 ## Run locally
 
 Tested with **Python 3.12** and **Node.js 22**.
@@ -123,7 +139,7 @@ After building and committing a clean checkout:
 .venv/bin/python scripts/service.py stop
 ```
 
-The service installs a commit-hashed release under `~/Library/Application Support/Calibrain Harness/current`. That folder name preserves compatibility with existing installations. Live credentials, the SQLite database, and logs remain outside release directories. `release.json` records the deployed file hashes. New deployments preserve credentials and trading records.
+The service installs a commit-hashed release under `~/Library/Application Support/Calibrain Harness/current`. That folder name preserves compatibility with existing installations. Live credentials, the SQLite database, and logs remain outside release directories. `release.json` records the deployed file hashes. New deployments preserve credentials and trading records. The installer backs up the stopped database before a release switch.
 
 Run one execution service per database/account. The application serves static frontend assets and its API from the same localhost origin. Node is needed to build the frontend, not to run the market-data path.
 
@@ -135,7 +151,7 @@ Run one execution service per database/account. The application serves static fr
 | Frontend | Next.js 16.4.6, React 19.3, TypeScript, static export |
 | Candles | Lightweight Charts 4.2 |
 | Surfaces and research charts | Plotly.js 4.3.0, WebGL |
-| Storage | SQLite WAL: forecasts, labels, model trades, manual orders, ownership reservations, runs, events |
+| Storage | SQLite WAL: forecasts, labels, model trades, manual orders, execution intents/leases, immutable evidence, experiment ledgers, jobs, NAV |
 | Browser updates | Same-origin WebSocket with changed ticks, books, bars, account and news events |
 | Upstream streams | One shared connection per stock, crypto and news feed |
 | Data fallback | Batched snapshots, historical-bar backfills, reconnects with bounded retry delays |
@@ -143,7 +159,7 @@ Run one execution service per database/account. The application serves static fr
 | Palette | Black, white, orange `#ff9b00`, blue `#4da3ff`, green `#00d084`, red `#ff4d4f` |
 | Branding | White O inside a black square, white Openberg wordmark |
 | Secrets | Local environment only, owner-only `.env`, masked key status in the UI |
-| Execution | Alpaca paper host, verified account pin, explicit manual reviews, durable order identities |
+| Execution | Alpaca paper host, pinned credentials/account, process lock, explicit origins, atomic attempt claims, shared symbol/capital reservations |
 | Automation | Model requests follow an hourly budget; auto-trading is opt-in |
 
 Avenir is a local system font and is not redistributed. Install a licensed copy to use it on other systems. Bergoom's files and [SIL OFL license](web-next/public/fonts/bergoom/LICENSE.md) are included.
@@ -156,9 +172,9 @@ cd web-next && npm ci && npm run build
 npm audit --omit=dev
 ```
 
-Tests cover provider contracts, account ownership, order ambiguity, duplicate prevention, partial fills, quantity fees, cancellation, option ownership, source provenance, charts, watchlist separation, surfaces, and SEC history.
+Tests cover provider contracts, account ownership, order ambiguity, duplicate prevention, partial pairs, quantity fees, cancellation races, option ownership, source provenance, calendar deadlines, marked accounting, research conventions, charts, watchlist separation, surfaces, and SEC history.
 
-Live paper checks verified a crypto buy → exact-balance sell and a resting-order cancellation through the Chrome UI. Stock/option fill behavior must also be tested during an open US session. The optional `scripts/alpaca_smoke.py --execute` uses its own database and a small paper crypto round trip.
+Live paper checks verified a crypto buy → exact-balance sell and a resting-order cancellation through the Chrome UI. Stock/option and authentic economic-link fill behavior still require an eligible open-market opportunity. The optional `scripts/alpaca_smoke.py --execute` requires the normal service to release its account lock first. Its separate diagnostic database does not own the production strategy book.
 
 ## Sources and credits
 

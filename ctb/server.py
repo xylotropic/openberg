@@ -109,6 +109,35 @@ def make_app(engine: Engine) -> web.Application:
         except Exception as exc:
             return j({"error": str(exc)}, 502)
 
+    def alpha_service():
+        if not getattr(engine,'alpha',None):
+            raise ValueError('The economic-link strategy requires a connected pinned paper coordinator')
+        return engine.alpha
+
+    @routes.get('/api/alpha')
+    async def alpha_status(_):
+        try: return j(alpha_service().status())
+        except ValueError as exc: return j({'error':str(exc)},503)
+
+    @routes.post('/api/alpha/control')
+    async def alpha_control(req):
+        values=await req.json()
+        return await research_response(lambda: alpha_service().control(values.get('action')))
+
+    @routes.get('/api/alpha/evidence/{id}')
+    async def alpha_evidence(req):
+        service=alpha_service();identity=req.match_info['id']
+        source=service.j.one('SELECT id,provider,entity,url,published_at,original_start,observed_at,ingest_kind,content_hash,text,metadata_json,previous_id FROM alpha_sources WHERE id=?',[identity])
+        if not source: return j({'error':'Evidence was not found'},404)
+        # Original raw bytes remain in the local journal; rendering uses plain escaped text.
+        if source.get('metadata_json'): source['metadata_json']={k:v for k,v in source['metadata_json'].items() if k!='documents'}
+        return j({'source':source,'passages':service.j.query('SELECT * FROM alpha_passages WHERE source_id=?',[identity])})
+
+    @routes.get('/api/alpha/classification/{id}')
+    async def alpha_classification(req):
+        row=alpha_service().j.one('SELECT * FROM alpha_classifications WHERE id=?',[req.match_info['id']])
+        return j(row if row else {'error':'Classification was not found'},200 if row else 404)
+
     @routes.post('/api/manual/preview')
     async def manual_preview(req):
         values = await req.json()
@@ -396,6 +425,8 @@ def make_app(engine: Engine) -> web.Application:
 
     @routes.post("/api/kill")
     async def kill(_: web.Request) -> web.Response:
+        if getattr(engine,'alpha',None):
+            await engine.alpha.control('close_owned')
         if engine.executor:
             await engine.executor.kill("dashboard kill switch")
         s.trading_enabled = False

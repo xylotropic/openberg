@@ -60,6 +60,9 @@ class ManualTrading:
         resources = [normalized(symbol)]
         if kind == 'option':
             resources.append(normalized(asset.get('underlying_symbol') or symbol[:-15]))
+        coordinator = getattr(ex, 'coordinator', None)
+        if coordinator and coordinator.conflict(resources, 'manual', 'manual'):
+            raise ValueError('Another owner reserves this symbol or its underlying')
         if not asset.get('tradable'):
             raise ValueError('Asset is not tradable on this paper account')
         if asset.get('class') == 'crypto' and kind != 'crypto':
@@ -196,7 +199,7 @@ class ManualTrading:
         for claim in claims:
             groups.setdefault(claim['position_symbol'], []).append(claim)
         pending = self.db.query("SELECT symbol FROM manual_orders WHERE account_id=? AND attempted_ts IS NOT NULL "
-                                "AND status NOT IN ('filled','canceled','expired','rejected','replaced')", [self.s.alpaca_account_id])
+                                "AND (status NOT IN ('filled','canceled','expired','rejected','replaced') OR inventory_seen_ts IS NULL)", [self.s.alpaca_account_id])
         for position_symbol, group in groups.items():
             resources = {g['resource'] for g in group}
             has_inventory = any(normalized(p['symbol']) in resources for p in self.ex.raw_positions)
@@ -236,6 +239,20 @@ class ManualTrading:
             body['client_order_id'] = row['client_order_id']
             if body != row['request_json']:
                 raise ValueError('Order changed. Review the ticket again')
+            coordinator = getattr(self.ex, 'coordinator', None)
+            if coordinator:
+                intent = coordinator.prepare(owner_type='manual', owner_id='manual', owner_record=identity,
+                    business_key='manual:' + identity, body=body, effect='reduce' if review['reducing'] else 'increase',
+                    resources=review['resources'], expected_qty=review['position_qty'], max_qty=body['qty'],
+                    notional=review['estimated_notional'], deadline=row['review_json']['expires_at'])
+                try:
+                    order = await coordinator.dispatch(intent)
+                    self.db.update('manual_orders', identity, {'broker_json':order,'status':order['status'],'error':None})
+                except AlpacaError as exc:
+                    ambiguous = exc.status >= 500 or exc.status in (408,429)
+                    self.db.update('manual_orders', identity, {'status':'unknown' if ambiguous else 'rejected','error':str(exc)})
+                self.ex.emit('manual_order', {'id': identity})
+                return self.view(self.db.one('SELECT * FROM manual_orders WHERE id=?',[identity]))
             # This state survives process death between POST and its response. Never POST it twice.
             with self.db.lock:
                 self.db.conn.execute('BEGIN IMMEDIATE')
@@ -289,7 +306,13 @@ class ManualTrading:
             row = self.db.one('SELECT * FROM manual_orders WHERE id=?', [identity])
             order = row.get('broker_json')
             if order and row['status'] not in FINAL:
-                await self.client.cancel(order)
+                coordinator = getattr(self.ex, 'coordinator', None)
+                if coordinator:
+                    intent = coordinator.one('SELECT * FROM execution_intents WHERE account_id=? AND owner_type=? AND owner_record=?', [self.ex.account_id,'manual',identity])
+                    if not intent: raise ValueError('The manual order has no execution record')
+                    await coordinator.cancel(intent['id'])
+                else:
+                    await self.client.cancel(order)
                 self.db.update('manual_orders', identity, {'status': 'pending_cancel'})
             self.ex.emit('manual_order', {'id': identity})
             return self.view(self.db.one('SELECT * FROM manual_orders WHERE id=?', [identity]))

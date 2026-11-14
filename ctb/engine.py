@@ -7,6 +7,7 @@ import json
 import logging
 import random
 import time
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
@@ -43,6 +44,10 @@ class Engine:
     def __init__(self, s: Settings):
         self.s = s
         self.db = DB(s.db_path)
+        from .alpha.ledger import Journal
+        self.alpha_journal = Journal(self.db)
+        self.coordinator = None
+        self.alpha = None
         if s.venue == 'alpaca':
             s.watchlist_symbols = list(dict.fromkeys([*s.symbols, *s.watchlist_symbols]))
         self.store = MarketStore(s.watchlist_symbols if s.venue == 'alpaca' else s.symbols)
@@ -101,8 +106,13 @@ class Engine:
         hour_ago = time.time() - 3600
         for r in self.db.query("SELECT ts FROM decisions WHERE ts > ? ORDER BY ts", (hour_ago,)):
             self.budget.calls.append(r["ts"])
+        for r in self.alpha_journal.query('SELECT started_at FROM alpha_classifications WHERE started_at>? ORDER BY started_at',[hour_ago]):
+            self.budget.calls.append(r['started_at'])
+        self.budget.calls = deque(sorted(self.budget.calls))
         for r in self.db.query("SELECT ts FROM news WHERE ts > ? ORDER BY ts", (hour_ago,)):
             self.news_budget.calls.append(r["ts"])
+        self.budget.bind(self.db,'primary')
+        self.news_budget.bind(self.db,'news')
         self.run = runs_mod.ensure(self.db, self.s)
         try:
             self.calibrator.refit()
@@ -126,6 +136,10 @@ class Engine:
             asyncio.create_task(self.models.loop(), name="models"),
             asyncio.create_task(self._validation_loop(), name="validation"),
         ]
+        if self.s.venue=='alpaca' and self.coordinator and self.coordinator._file is not None:
+            from .alpha.service import AlphaService
+            self.alpha=AlphaService(self)
+            await self.alpha.start()
         self.db.event("info", "started", f"engine started; model={self.s.model_spec.label} ({self.kairos.model}) "
                                          f"{'ready' if self.kairos.configured else 'NOT CONFIGURED'}; "
                                          f"trading={'on' if self.s.trading_enabled else 'observe-only'}")
@@ -135,13 +149,39 @@ class Engine:
             from .broker.alpaca_executor import AlpacaExecutor
             if getattr(self, "_reconcile_task", None):
                 self._reconcile_task.cancel()
+                await asyncio.gather(self._reconcile_task, return_exceptions=True)
             self.executor = AlpacaExecutor(self.s, self.db, self.alpaca, self.emit, self.feed)
             try:
                 await self.executor.start()
+                if not self.s.alpaca_account_id:
+                    self.s.alpaca_account_id = self.executor.account_id
+                    save_env({'CTB_ALPACA_ACCOUNT_ID':self.s.alpaca_account_id})
+                from .broker.coordinator import BrokerCoordinator
+                if self.coordinator and self.coordinator.account_id != self.s.alpaca_account_id:
+                    self.coordinator.close()
+                    self.coordinator = None
+                if not self.coordinator:
+                    from .broker.alpaca import AlpacaPaper
+                    headers=self.alpaca.headers
+                    pinned_transport=AlpacaPaper(self.session,key=headers['APCA-API-KEY-ID'],secret=headers['APCA-API-SECRET-KEY'])
+                    self.coordinator = BrokerCoordinator(self.s, self.db, pinned_transport)
+                self.executor.coordinator = self.coordinator
+                self.executor.client = self.coordinator.read_client
+                self.executor.manual.client = self.coordinator.read_client
+                self.coordinator.acquire()
+                await self.coordinator.migrate()
                 for sym, inst in self.executor.instruments.items():
                     self.store[sym].instrument = inst
             except Exception as exc:
                 self.executor.sync_error = str(exc)
+                self.executor.halted_reason = 'Paper writer unavailable: ' + str(exc)
+                # A failed coordinator must never leave a writable raw adapter behind.
+                if not self.coordinator:
+                    from .broker.coordinator import BrokerCoordinator
+                    self.coordinator = BrokerCoordinator(self.s,self.db,self.alpaca)
+                self.executor.coordinator = self.coordinator
+                self.executor.client = self.coordinator.read_client
+                self.executor.manual.client = self.coordinator.read_client
             self.executor.run_id_fn = lambda: self.run["id"]
             self.executor.corr_fn = self.models.corr_with
             self._reconcile_task = asyncio.create_task(self.executor.reconcile_loop(), name="alpaca_reconcile")
@@ -178,6 +218,12 @@ class Engine:
             raise ValueError("this service is not configured for Alpaca")
         if self.db.one("SELECT id FROM trades WHERE status IN ('open','opening','closing') LIMIT 1"):
             raise ValueError("close harness trades before changing accounts")
+        if self.alpha_journal.one('SELECT id FROM alpha_versions WHERE armed_at IS NOT NULL'):
+            raise ValueError('This paper account is pinned to a registered experiment. A different account requires an isolated strategy namespace')
+        if self.alpha_journal.one("SELECT id FROM alpha_versions WHERE enabled=1") or self.alpha_journal.one("SELECT id FROM alpha_groups WHERE state NOT IN ('closed','canceled','abstained')"):
+            raise ValueError('Pause the economic-link strategy and reconcile its obligations before changing accounts')
+        if self.db.one("SELECT id FROM manual_orders WHERE attempted_ts IS NOT NULL AND status NOT IN ('filled','canceled','expired','rejected','replaced')"):
+            raise ValueError('Reconcile pending manual orders before changing accounts')
         account = await AlpacaPaper(self.session, key=api_key, secret=api_secret).account()
         save_env({"APCA_API_KEY_ID": api_key, "APCA_API_SECRET_KEY": api_secret,
                   "CTB_ALPACA_ACCOUNT_ID": account["id"], "CTB_TRADING_ENABLED": "0"})
@@ -318,6 +364,8 @@ class Engine:
             await self.executor.on_testnet_tick(symbol, t)
 
     async def stop(self) -> None:
+        if self.alpha:
+            await self.alpha.stop()
         self.feed.stop()
         if self.testnet_stream:
             self.testnet_stream.stop()
@@ -331,6 +379,10 @@ class Engine:
             self._stop_task.cancel()
         for t in self.tasks:
             t.cancel()
+        await asyncio.gather(*self.tasks, *([self._reconcile_task] if getattr(self,'_reconcile_task',None) else []), return_exceptions=True)
+        if self.coordinator:
+            async with self.coordinator.lock:
+                self.coordinator.close()
         if self.session:
             await self.session.close()
 

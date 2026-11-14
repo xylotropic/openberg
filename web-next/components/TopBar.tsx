@@ -65,6 +65,7 @@ export function CommandBar() {
     if (tfm) return selectTf(tfm);
     if (["TRADE", "BUY", "SELL"].includes(raw)) return setState({ view: "manual", manualDraft: { symbol: symbol || "SPY", side: raw === "SELL" ? "sell" : "buy", qty: manualQuantity(symbol || "SPY") } });
     if (views[raw]) return setState({ view: views[raw] });
+    if (raw === "ALPHA") return setState({ view: "alpha" });
     if (raw === "ASK" || raw === "PRB") return ask(raw === "PRB");
     if (raw === "KEYS") return setState({ modal: { kind: "keys" } });
     if (raw === "STRAT" || raw === "STRATEGY") return setState({ modal: { kind: "strategy" } });
@@ -151,7 +152,7 @@ export async function setPosCap(v?: number) {
   }
 }
 
-const VIEWS = [["mon", "F1", "MON"], ["eval", "F2", "EVAL"], ["valid", "F6", "VALID"], ["trades", "F3", "TRADES"], ["news", "F4", "NEWSROOM"], ["log", "F5", "LOG"], ["options", "F7", "OPTIONS"], ["filings", "F8", "FILINGS"], ["manual", "F9", "TRADE"], ["surfaces", "F10", "SURFACES"]] as const;
+const VIEWS = [["mon", "F1", "MON"], ["eval", "F2", "EVAL"], ["valid", "F6", "VALID"], ["trades", "F3", "TRADES"], ["news", "F4", "NEWSROOM"], ["log", "F5", "LOG"], ["options", "F7", "OPTIONS"], ["filings", "F8", "FILINGS"], ["manual", "F9", "TRADE"], ["surfaces", "F10", "SURFACES"], ["alpha", "F11", "ALPHA"]] as const;
 
 export function FKeys() {
   const view = useStore((s) => s.view);

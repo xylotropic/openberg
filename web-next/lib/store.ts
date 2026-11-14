@@ -18,7 +18,7 @@ export type State = {
   perf: Record<string, [number, number][]>;
   symbol: string | null;
   tf: string;
-  view: "mon" | "eval" | "valid" | "trades" | "news" | "log" | "options" | "filings" | "manual" | "surfaces";
+  view: "mon" | "eval" | "valid" | "trades" | "news" | "log" | "options" | "filings" | "manual" | "surfaces" | "alpha";
   surfaceUnderlying: string | null;
   manualDraft: { symbol: string; side?: "buy" | "sell"; qty?: string; limit_price?: string } | null;
   ticks: Record<string, Tick>;

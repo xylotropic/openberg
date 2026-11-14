@@ -15,7 +15,7 @@ import aiohttp
 PAPER_URL = "https://paper-api.alpaca.markets"
 DATA_URL = "https://data.alpaca.markets"
 OPTION_SYMBOL = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
-TERMINAL = {"filled", "canceled", "expired", "rejected", "suspended", "done_for_day"}
+TERMINAL = {"filled", "canceled", "expired", "rejected", "replaced"}
 
 
 def asset_class(symbol: str) -> str:

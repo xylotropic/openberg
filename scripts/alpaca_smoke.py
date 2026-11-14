@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import aiohttp
 from ctb.broker.alpaca import AlpacaPaper
 from ctb.broker.alpaca_executor import AlpacaExecutor
+from ctb.broker.coordinator import BrokerCoordinator
+from ctb.alpha.ledger import Journal
 from ctb.config import ROOT, load_settings
 from ctb.db import DB
 from ctb.market.alpaca import AlpacaFeed
@@ -38,7 +40,13 @@ async def main(execute=False):
         feed = AlpacaFeed(store, client)
         await feed.refresh_quotes()
         db = DB(ROOT / 'data' / 'alpaca-smoke.db')
-        ex = AlpacaExecutor(s, db, client, lambda *_: None, feed)
+        Journal(db)
+        coordinator=BrokerCoordinator(s,db,client)
+        # The normal service owns the same OS lock. This diagnostic cannot become a second writer.
+        coordinator.acquire()
+        await coordinator.migrate()
+        ex = AlpacaExecutor(s, db, coordinator.read_client, lambda *_: None, feed)
+        ex.coordinator=coordinator
         await ex.start()
         if ex.owned():
             raise RuntimeError('A prior smoke trade needs reconciliation before another test')
@@ -85,6 +93,7 @@ async def main(execute=False):
                     if not ex.owned():
                         break
                     await asyncio.sleep(2)
+            coordinator.close()
 
 
 asyncio.run(main('--execute' in sys.argv))
