@@ -168,6 +168,9 @@ class Scalper:
     async def start(self):
         if self.client.url!='https://console.nace.ai/v1/systemone':
             raise ValueError('Session strategy requires the verified Nace endpoint')
+        if self.e.run['config_json'].get('qset')!=VERSION:
+            from .runs import start
+            self.e.run=start(self.db,self.e.s,name='Session strategy · stocks / crypto · 5% allocation')
         row=self.db.one('SELECT started_at FROM scalper_calls ORDER BY started_at DESC LIMIT 1')
         self.next_call=(row['started_at']+self.spend.interval()) if row else 0
         self.task=asyncio.create_task(self.loop(),name='session_strategy')
@@ -311,4 +314,4 @@ class Scalper:
             'monthly_cap_usd':CAP,'month_spent_usd':self.spend.spent(),'error':self.last_error,'readiness':self.readiness,
             'risk':{'allocation_pct_per_position':5,'max_holding_minutes':30,'entry_cooldown_minutes':5},
             'decisions':self.db.query('SELECT id,ts,symbol,action,decision_json,latency_ms FROM decisions WHERE qset_version=? ORDER BY id DESC LIMIT 30',[VERSION]),
-            'last_call':self.db.one('SELECT id,started_at,state,input_tokens,actual_usd,error FROM scalper_calls ORDER BY started_at DESC LIMIT 1')}
+            'last_call':self.db.one('SELECT id,started_at,state,input_tokens,actual_usd,error FROM scalper_calls WHERE version=? ORDER BY started_at DESC LIMIT 1',[VERSION])}

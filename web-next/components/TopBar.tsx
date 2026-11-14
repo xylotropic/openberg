@@ -257,7 +257,7 @@ export function StatusLine() {
       <span><Dot c={ov.executor_error ? "bad" : a?.private_stream ? "ok" : "warn"} />PAPER <b>{ov.executor_error ? "OFFLINE" : a?.private_stream ? "STREAMING" : "POLLING"}</b>{a?.last_sync ? ` · sync ${age(now / 1000 - a.last_sync)}` : ""}</span>
       {ov.run && <span data-tip={ov.run.name}>RUN <b className="amb">{ov.run.id}</b></span>}
       <span>MODE <b className={a?.trading_enabled ? "up" : ""}>{a?.trading_enabled ? "AUTO-TRADE" : "OBSERVE"}</b>{!st.scalper_enabled && st.exploration_mode && <b className="amb"> · EXPLORE</b>}</span>
-      <span>TRADE TF <b className="amb">{st.tf_profiles[st.decision_tf]?.label || st.decision_tf}</b> · HOLD ≤ <b>{st.horizon_minutes}m</b></span>
+      <span>{st.scalper_enabled ? "SCAN" : "TRADE TF"} <b className="amb">{st.scalper_enabled ? "30S" : st.tf_profiles[st.decision_tf]?.label || st.decision_tf}</b> · HOLD ≤ <b>{st.scalper_enabled ? 30 : st.horizon_minutes}m</b></span>
       <span>LABELLED <b>{ov.labelled_total}</b></span>
       <span>{symbol?.includes("/") ? "CRYPTO SPOT · 24/7" : "STOCKS · IEX"}</span>
       <span style={{ marginLeft: "auto" }} suppressHydrationWarning>UTC <b>{new Date(now).toISOString().slice(11, 19)}</b></span>

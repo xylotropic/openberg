@@ -151,6 +151,9 @@ def test_old_bar_callbacks_make_no_legacy_model_calls_when_enabled(tmp_path):
     s=Settings();s.db_path=tmp_path/'engine.db';s.scalper_enabled=True
     e=Engine(s)
     assert asyncio.run(e.decide('TSLA')) is None
+    from ctb.runs import config_snapshot
+    cfg=config_snapshot(s)
+    assert cfg['qset']==VERSION and cfg['allocation_pct_per_position']==5 and cfg['horizon_minutes']==30
 
 
 def test_stale_quote_and_closed_spy_are_not_sent(tmp_path):
