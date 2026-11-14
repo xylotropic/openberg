@@ -299,7 +299,7 @@ function Account() {
     ["Unrealised", <span key="u" className={ud(w.unrealized_pnl)}>{sg(w.unrealized_pnl)}</span>, ({flat:"USD · flat",live:"USD · live bid/ask",mixed:"USD · mixed marks",broker:"USD · broker marks"} as Record<string,string>)[a.unrealized_basis] || "USD"],
     ["Today PnL", <span key="d" className={ud(a.daily_pnl)}>{sg(a.daily_pnl)}</span>, a.daily_pnl_available === false ? "Prior-day equity unavailable" : `halts at −${st.daily_loss_limit_pct}%`],
     ["Positions", <span key="p">{a.positions.length}/{st.max_positions} <button className="mini" onClick={() => setPosCap()} data-tip="Change the max number of open positions. Applies to new entries only.">CAP</button></span>, `${a.open_orders} open orders`],
-    [st.scalper_enabled ? "Allocation / trade" : "Risk / trade", `${st.scalper_enabled ? st.scalper_allocation_pct : st.exploration_mode ? Math.min(st.explore_risk_pct, st.risk_per_trade_pct) : st.risk_per_trade_pct}%`, `entry cap ${st.max_entry_slip_bp}bp · ≤${st.max_leverage}x`],
+    [st.scalper_enabled ? "Allocation / trade" : "Risk / trade", `${st.scalper_enabled ? st.scalper_allocation_pct : st.exploration_mode ? Math.min(st.explore_risk_pct, st.risk_per_trade_pct) : st.risk_per_trade_pct}%${st.scalper_enabled && st.scalper_allocation_basis === "remaining_capital" ? " remaining" : ""}`, `entry cap ${st.max_entry_slip_bp}bp · ≤${st.max_leverage}x`],
   ];
   return (
     <>

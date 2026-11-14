@@ -133,8 +133,10 @@ class AlpacaExecutor(Executor):
             decision = self.db.one('SELECT * FROM decisions WHERE id=?',[decision_id])
             candle = bool(decision and decision.get('qset_version') == 'candles-session-v1')
             if candle:
-                from ..scalper import SYMBOLS, packet, allocation_pct
-                try: allocation=allocation_pct(self.s)/100
+                from ..scalper import SYMBOLS, packet, allocation_pct,allocation_basis
+                try:
+                    allocation=allocation_pct(self.s)/100
+                    basis=allocation_basis(self.s)
                 except (ValueError,TypeError): return {'ok':False,'reason':'Session allocation is invalid'}
                 if not self.s.scalper_enabled or symbol not in SYMBOLS or symbol not in self.s.symbols:
                     return {'ok':False,'reason':'Session strategy is not active on this symbol'}
@@ -189,8 +191,17 @@ class AlpacaExecutor(Executor):
                                            run_drawdown_pct=self.run_drawdown_pct(), same_side_corr=correlations)
             risk = eq * risk_pct / 100
             if candle:
-                risk = eq*allocation*(sl_bp/10000)
-                sizing={'method':'portfolio_allocation','allocation_pct':allocation*100,'equity':eq,'target_notional':eq*allocation}
+                if self.coordinator:
+                    try:
+                        await self.coordinator.refresh(force=True)
+                        sizing=self.coordinator.session_allocation(symbol)
+                    except (ValueError,TypeError):
+                        return {'ok':False,'reason':'Available capital could not be verified'}
+                elif basis=='remaining_capital':
+                    return {'ok':False,'reason':'Remaining-capital sizing requires the shared paper coordinator'}
+                else:
+                    sizing={'method':'portfolio_allocation','allocation_basis':basis,'allocation_pct':allocation*100,'equity':eq,'target_notional':eq*allocation}
+                risk = sizing['target_notional']*(sl_bp/10000)
             open_risk = sum(float(t.get('risk_usd') or 0) for t in self.owned())
             risk = min(risk, max(0, eq * self.s.max_open_risk_pct / 100 - open_risk))
             if sum(t['side'] == side for t in self.owned()) >= self.s.max_same_side:
@@ -198,7 +209,7 @@ class AlpacaExecutor(Executor):
             available = max(0.0, float(self.account['cash'])) if kind == 'crypto' else self.wallet['available']
             notional = min(risk / (sl_bp / 10000), self.s.max_notional_usdt, available * .9, eq * self.s.max_leverage * .9)
             if candle:
-                notional=min(eq*allocation,risk/(sl_bp/10000),available*.9,eq*self.s.max_leverage*.9)
+                notional=min(sizing['target_notional'],risk/(sl_bp/10000),available*.9,eq*self.s.max_leverage*.9)
             step = float(asset.get('min_trade_increment') or 1e-8) if kind == 'crypto' else 1.0
             dec_step = Decimal(str(step))
             qty = float((Decimal(str(notional)) / Decimal(str(ref)) / dec_step).to_integral_value(rounding=ROUND_DOWN) * dec_step)
@@ -211,6 +222,8 @@ class AlpacaExecutor(Executor):
                 qty=float((Decimal(str(notional))/Decimal(str(max(ref,price)))/dec_step).to_integral_value(rounding=ROUND_DOWN)*dec_step)
                 if qty<=0 or qty<float(asset.get('min_order_size') or step):
                     return {'ok':False,'reason':'Strategy cap below minimum order size'}
+                sizing['order_notional']=qty*price
+                sizing['stop_risk_usd']=qty*ref*sl_bp/10000
                 dj=decision['decision_json'];dj['execution_quote_at']=st.book_ts
                 self.db.update('decisions',decision_id,{'decision_json':dj})
             link = 'ctba-' + uuid.uuid4().hex[:28]

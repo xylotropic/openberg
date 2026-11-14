@@ -192,6 +192,26 @@ class BrokerCoordinator:
                       if i['client_order_id'] not in visible and i['id'] != exclude_id)
         return max(0, base - other - unknown)
 
+    def session_allocation(self, symbol, *, exclude_id=None):
+        from ..scalper import allocation_pct,allocation_basis
+        from .capital import amount,remaining_capital
+        basis=allocation_basis(self.s);pct=allocation_pct(self.s)
+        if basis=='remaining_capital':
+            positions={resource(p['symbol']):p for p in self.snapshot['positions']}
+            for trade in self.db.query("SELECT symbol,side,qty FROM trades WHERE account_id=? AND venue='alpaca' AND status IN ('open','closing')",[self.account_id]):
+                position=positions.get(resource(trade['symbol']))
+                expected=amount(trade['qty'])*(1 if trade['side']=='long' else -1)
+                if not position or abs(signed_position(position)-expected)>Decimal('.00000001'):
+                    raise ValueError('An owned position needs reconciliation before allocating remaining capital')
+            intents=self.query('SELECT * FROM execution_intents WHERE account_id=?',[self.account_id])
+            allocations=self.query('SELECT amount FROM execution_allocations WHERE account_id=? AND owner_type<>?', [self.account_id,'legacy'])
+            details=remaining_capital(self.snapshot,intents,allocations,crypto=asset_class(symbol)=='crypto',exclude_id=exclude_id)
+        else:
+            details={'equity':float(amount(self.snapshot['account'].get('equity')))}
+        base=details['available_capital'] if basis=='remaining_capital' else details['equity']
+        return {'method':'portfolio_allocation','allocation_basis':basis,'allocation_pct':pct,**details,
+                'target_notional':float(amount(base)*amount(pct)/100)}
+
     @staticmethod
     def pending_notional(intent):
         requested=Decimal(intent['request_json']['qty'])
@@ -208,8 +228,10 @@ class BrokerCoordinator:
     def validate_snapshot(order, intent):
         if order.get('client_order_id')!=intent['client_order_id']:
             raise ValueError('Broker order identity differs from the canonical intent')
-        quantity=Decimal(str(order.get('filled_qty') or 0));requested=Decimal(intent['request_json']['qty'])
-        if not quantity.is_finite() or quantity<0 or quantity>requested or (order.get('status')=='filled' and quantity!=requested):
+        from .capital import amount
+        quantity=amount(order.get('filled_qty'));requested=amount(intent['request_json']['qty'])
+        previous=amount((intent.get('broker_json') or {}).get('filled_qty') or 0)
+        if quantity<previous or quantity<0 or quantity>requested or (order.get('status')=='filled' and quantity!=requested):
             raise ValueError('Broker cumulative fill quantity is missing or inconsistent')
 
     def observe_inventory(self):
@@ -426,10 +448,9 @@ class BrokerCoordinator:
                         or answer.get('choice')!=dj['model_action'] or answer!=(decision.get('answers_json') or {}).get(row['symbol'])
                         or (answer.get('probabilities') or {}).get(dj['model_action'],0)<.6):
                     raise ValueError('Session trade is not bound to its exact live model decision')
-                from ..scalper import allocation_pct
-                allocation=float(self.snapshot['account'].get('equity') or 0)*allocation_pct(self.s)/100
+                allocation=self.session_allocation(row['symbol'],exclude_id=intent['id'])['target_notional']
                 if float(body['qty'])*float(body.get('limit_price') or 0)>allocation+.000001:
-                    raise ValueError('Session entry exceeds configured allocation of paper-account equity')
+                    raise ValueError('Session entry exceeds configured allocation of available capital')
         else:
             with self.db.lock:
                 order = self.db.conn.execute('SELECT * FROM alpha_orders WHERE id=? AND account_id=?', [intent['owner_record'], self.account_id]).fetchone()
