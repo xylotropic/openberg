@@ -131,7 +131,7 @@ export function ValidationView() {
               ))}</tbody>
             </table>
           ) : <div className="empty">Needs labelled decisions</div>}
-          <div className="muted" style={{ padding: "4px 8px" }}>Skill = 1 − Brier(model) / Brier(base rates), on windows that do not overlap. A symbol is validated, and strict trades are allowed on it, only when the whole 90% interval is above 0.</div>
+          <div className="muted" style={{ padding: "4px 8px" }}>NON-OVERLAPPING WINDOWS · VALIDATED: 90% CI LOWER BOUND &gt; 0</div>
         </Panel>
         <Panel code="HOUR" title="Model side realised R by hour (UTC) · sessions: Asia 00, Europe 07, US 13, late US 21"><HourBars rows={v.by_hour_utc} /></Panel>
         <Panel code="SESS" title="By session" tight><GroupTable rows={v.by_session} label="Session" /></Panel>
@@ -158,7 +158,7 @@ export function ValidationView() {
                 <td className={`r ${ud(r.gross_edge_r)}`}>{sg(r.gross_edge_r, 3)}</td><td className={`r ${ud(r.net_r)}`}>{sg(r.net_r, 3)}</td></tr>
             ))}</tbody>
           </table>
-          <div className="muted" style={{ padding: "4px 8px" }}>Gross = what the model's side earned before fees and slippage. An edge is tradeable only if gross &gt; cost. Live cost model: target {fx(v.live_cost_model?.target_bp, 1)}bp · stop {fx(v.live_cost_model?.stop_bp, 1)}bp · time exit {fx(v.live_cost_model?.time_bp, 1)}bp ({v.live_cost_model?.entry_mode} entries).</div>
+          <div className="muted" style={{ padding: "4px 8px" }}>COST BP · {v.cost_symbol} · TARGET {fx(v.live_cost_model?.target_bp, 1)} · STOP {fx(v.live_cost_model?.stop_bp, 1)} · TIME {fx(v.live_cost_model?.time_bp, 1)}</div>
         </Panel>
         <Panel code="DRFT" title="Drift · rolling skill (30 windows)" tight>
           <table className="t">
@@ -168,7 +168,7 @@ export function ValidationView() {
                 <td className="r">{fx(dr[g].ph, 2)} / {fx(dr[g].threshold, 1)}</td><td>{dr[g].alarm ? <span className="dn">ALARM</span> : <span className="up">OK</span>}</td></tr>
             ))}</tbody>
           </table>
-          <div className="muted" style={{ padding: "4px 8px" }}>On alarm the model's weight drops to 0 for that question (DRIFT ACTION base), or trading pauses (pause).</div>
+
         </Panel>
         <Panel code="EXEC" title="Execution quality" tight><KV rows={[
           ["Implementation shortfall", dist(ex.implementation_shortfall_bp), "Fill vs the mainnet price the decision was made on; includes testnet divergence"],

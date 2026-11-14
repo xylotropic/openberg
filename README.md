@@ -34,7 +34,7 @@ cd web-next && npm ci && npm run build && cd ..
 .venv/bin/python scripts/alpaca_smoke.py --execute # <= $20 paper crypto entry -> backstop -> close
 ```
 
-The smoke test uses its own database, refuses an existing BTC position/order and verifies that no position/order remains. Local verification records and service logs are in gitignored `data/`. Broker and model credentials are never printed or sent back to the terminal browser.
+The smoke test uses its own database, refuses an existing BTC position/order and verifies that no position/order remains. Local verification records are in gitignored `data/`. The background service runs a hashed release from `~/Library/Application Support/Calibrain Harness/current`. Its live `.env`, SQLite database and logs stay in that application-data folder. Each release records the source commit and exact file hashes in `release.json`. The service preserves its live credentials and database on later deployments. Broker and model credentials are never printed or sent back to the terminal browser.
 
 The upstream documentation below describes the original Bybit implementation, which remains available as a separate legacy venue. This edition's active Alpaca behavior is described above.
 

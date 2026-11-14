@@ -26,7 +26,7 @@ export function NewsroomView() {
     <div className="toolbar"><b>Newsroom</b><span className="tag long">ALPACA NEWS PLUGIN</span>
       <input aria-label="News symbols" placeholder="All markets, or AAPL,BTCUSD" value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} />
       <button className="kbtn amber" disabled={busy} onClick={() => { setPage(0); setPages([null]); void load(); }}>{busy ? "LOADING…" : "LOAD NEWS"}</button>
-      <span className="muted">Source and publication time are retained on every headline.</span></div>
+</div>
     <ErrorLine text={error} />
     <section className="pnl"><div className="ph"><span className="code">WIRE</span>Stocks · crypto · market news<span className="ph-r">{data?.items.length ?? 0} articles · page {page + 1}</span></div>
       <div className="newsroom-list">{data?.items.map((n: Data) => <article key={n.id}>
@@ -63,7 +63,7 @@ export function FilingsView() {
     </div>
     <ErrorLine text={error} />
     <section className="pnl"><div className="ph"><span className="code">EDGAR</span>{data?.company || "Issuer filings"}<span className="ph-r">CIK {data?.cik || "—"} · {data?.total ?? 0} filings in this archive</span></div>
-      <div className="research-note">All form types, amendments, ownership disclosures, prospectuses, exhibits and older manifests remain accessible. Select each history archive for the issuer’s complete available SEC submission history. This view covers SEC EDGAR.</div>
+
       <div className="research-table"><table className="t"><thead><tr><th>Filed</th><th>Form</th><th>Report date</th><th>Description</th><th>Accession</th><th>Documents</th></tr></thead><tbody>{data?.items.map((f: Data) => <tr key={f.accession}>
         <td>{f.filed}</td><td className="amb">{f.form}</td><td>{f.report_date || "—"}</td><td>{f.description || f.document || "—"}</td><td>{f.accession}</td>
         <td><Link href={f.url}>OPEN</Link> · <Link href={f.filing_url}>ALL DOCUMENTS</Link></td></tr>)}</tbody></table></div>
@@ -72,7 +72,7 @@ export function FilingsView() {
     <div className="research-pagination"><button className="kbtn" disabled={busy || !offset} onClick={() => void load(Math.max(0, offset - 100))}>PREVIOUS</button>
       <span>{data?.total ? `${offset + 1}–${Math.min(offset + 100, data.total)} OF ${data.total}` : "0 FILINGS"}</span>
       <button className="kbtn" disabled={busy || data?.next_offset == null} onClick={() => void load(data!.next_offset)}>NEXT</button>
-      <span className="muted">Market-wide public archive: <Link href="https://www.sec.gov/Archives/edgar/daily-index/">Daily filing indexes</Link> · <Link href="https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip">Full submissions dataset</Link></span></div>
+      <span className="muted"><Link href="https://www.sec.gov/Archives/edgar/daily-index/">SEC INDEXES</Link> · <Link href="https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip">BULK DATA</Link></span></div>
   </main>;
 }
 
@@ -113,7 +113,7 @@ export function OptionsView() {
       <input aria-label="Options expiration" type="date" value={expiry} onChange={e => setExpiry(e.target.value)} />
       <select aria-label="Option type" value={kind} onChange={e => setKind(e.target.value)}><option value="">CALLS + PUTS</option><option value="call">CALLS</option><option value="put">PUTS</option></select>
       <button className="kbtn amber" disabled={busy} onClick={() => void load()}>{busy ? "LOADING…" : "LOAD CHAIN"}</button></div>
-    <div className="research-note amb">FREE INDICATIVE FEED · Trades are delayed and quotes are modified. Automated options entries are paused. The paper desk supports buying single calls and puts with a fixed premium limit.</div>
+    <div className="research-note amb">INDICATIVE · DELAYED / MODIFIED QUOTES · PAPER · LONG CALLS / PUTS</div>
     <ErrorLine text={error} />
     <section className="pnl"><div className="ph"><span className="code">CHAIN</span>{data?.underlying || underlying} options<span className="ph-r">{open ? "US MARKET OPEN" : "US MARKET CLOSED"} · {Object.keys(data?.items || {}).length} contracts</span></div>
       <div className="research-table"><table className="t"><thead><tr><th>Contract</th><th>Expiry</th><th>Type</th><th className="r">Strike</th><th className="r">Bid</th><th className="r">Ask</th><th className="r">Last</th><th className="r">IV</th><th className="r">Delta</th><th className="r">Theta</th><th /></tr></thead><tbody>{Object.entries<Data>(data?.items || {}).map(([s, o]) => {
@@ -123,10 +123,10 @@ export function OptionsView() {
       <div className="research-pagination"><button className="kbtn" disabled={busy || !data?.next_page_token} onClick={() => void load(data!.next_page_token)}>NEXT CONTRACTS</button></div>
     </section>
     <section className="pnl option-ticket"><div className="ph"><span className="code">ORDER</span>Long option · paper limit order</div>
-      <div className="toolbar"><span className="amb">{selected || "Select a contract from the chain"}</span><label>CONTRACTS <input aria-label="Option contracts quantity" type="number" min="1" step="1" value={qty} onChange={e => setQty(Number(e.target.value))} /></label>
+      <div className="toolbar"><span className="amb">{selected || "SELECT CONTRACT"}</span><label>CONTRACTS <input aria-label="Option contracts quantity" type="number" min="1" step="1" value={qty} onChange={e => setQty(Number(e.target.value))} /></label>
         <label>LIMIT PREMIUM $ <input aria-label="Option limit premium" type="number" min="0.01" step="0.01" value={limit} onChange={e => setLimit(e.target.value)} /></label><span>MAX DEBIT ${fx(Number(limit) * qty * 100)}</span>
         <button className="kbtn amber" disabled={busy || !open || !selected || !limit} onClick={() => void submit()}>REVIEW PAPER BUY</button></div>
-      {!open && <p className="muted">The US market is closed. Stock and option order execution can be verified when it opens. Crypto remains available 24/7.</p>}
+      {!open && <p className="muted">US MARKET CLOSED · CRYPTO OPEN</p>}
       {result && <p className="up">{result}</p>}
     </section>
   </main>;

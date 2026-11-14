@@ -115,9 +115,9 @@ function TfModal({ tf }: { tf: string }) {
           <Row k="Model requests / hour" a={`~${cur.required_rph}`} b={`~${nxt.required_rph}`} />
           <Row k="Input tokens / hour" a={tok(cur.required_rph)} b={tok(nxt.required_rph)} />
         </div>
-        <p className="muted" style={{ margin: "8px 0 0" }}>Takes effect at the next {nxt.label} bar close. Open positions keep their original time-stop. Every decision is stamped with its timeframe, so EVAL can compare them separately. Saved to .env.</p>
+        <p className="muted" style={{ margin: "8px 0 0" }}>NEXT BAR · EXISTING TIME-STOPS UNCHANGED</p>
         {over && <div className="warnbox"><b className="amb">BUDGET.</b> {nxt.label} needs ~{nxt.required_rph} requests/hour but the cap is {budget}. With the current cap, about {Math.round(100 * (1 - budget / nxt.required_rph))}% of bars would be skipped.</div>}
-        {tf === "1" && <div className="warnbox"><b className="amb">1M NOTE.</b> More frequent forecasts use more model requests. Review measured latency and outcome costs in EVAL before changing the cadence.</div>}
+
       </div>
       <div className="keyactions" style={{ margin: "8px 10px" }}>
         {over ? <><button className="kbtn amber" onClick={() => go(true)}>SWITCH + RAISE CAP TO {nxt.required_rph}/H</button><button className="kbtn" onClick={() => go(false)}>SWITCH, KEEP CAP {budget}</button></>
@@ -147,10 +147,10 @@ function KeysModal() {
   return (
     <Dialog className="keys">
       <div className="ph"><span className="code">KEYS</span>API credentials</div>
-      <p>Saved to <code>.env</code> in the project folder (gitignored, owner-only permissions), applied immediately. Keys are never sent back to the browser; only the last 4 characters are shown.</p>
+
       <section className="keybox">
         <div className="keyhead"><b>KAIROS · MINARA CLOUD</b>{k && (k.kairos.set ? <Stat ok txt={`SET ${k.kairos.hint}`} /> : <Stat ok={false} txt="NOT SET" />)}</div>
-        <p>Create a key at <a href="https://minara.cloud" target="_blank" rel="noopener noreferrer">minara.cloud</a> in a <b>Kairos-enabled group</b>.</p>
+        <p><a href="https://minara.cloud" target="_blank" rel="noopener noreferrer">CREATE KAIROS KEY ↗</a></p>
         <label>API KEY<input ref={kairosKey} type="password" autoComplete="off" spellCheck={false} placeholder="paste Kairos API key" /></label>
         <label>BASE URL (OPTIONAL)<input ref={kairosUrl} type="text" autoComplete="off" spellCheck={false} placeholder={k?.kairos.base_url || "https://minara.cloud"} /></label>
         <div className="keyactions">
@@ -161,13 +161,13 @@ function KeysModal() {
             load(); loadOverview();
           })}>{busy === "ks" ? "WORKING…" : "SAVE & TEST"}</button>
           <button className="kbtn" type="button" disabled={!!busy} onClick={() => run("kt", async () => { try { kairosResult(await post("/api/keys/kairos/test")); } catch (e: any) { setKMsg({ ok: false, text: e.message }); } })}>{busy === "kt" ? "WORKING…" : "TEST CURRENT KEY"}</button>
-          <span className="muted">A test uses 1 request from the hourly budget.</span>
+          <span className="muted">1 REQUEST</span>
         </div>
         <div className={`keymsg ${kMsg ? (kMsg.ok ? "ok" : "bad") : ""}`}>{kMsg?.text}</div>
       </section>
       <section className="keybox">
         <div className="keyhead"><b>DREX FINANCE · NACE.AI</b>{k && (k.drex?.set ? <Stat ok txt={`SET ${k.drex.hint} · ${k.drex.model_id}`} /> : <Stat ok={false} txt="NOT SET" />)}</div>
-        <p>Create a key in the <a href="https://console.nace.ai/dashboard/api-keys" target="_blank" rel="noopener noreferrer">Nace Console</a>. Uses Drex Max Finance for market decisions, billed per input token. Choose DREX FINANCE in the model selector.</p>
+        <p><a href="https://console.nace.ai/dashboard/api-keys" target="_blank" rel="noopener noreferrer">CREATE NACE KEY ↗</a></p>
         <label>API KEY<input ref={drexKey} type="password" autoComplete="off" spellCheck={false} placeholder="paste Nace API key" /></label>
         <div className="keyactions">
           <button className="kbtn amber" type="button" disabled={!!busy} onClick={() => run("ds", async () => {
@@ -177,13 +177,13 @@ function KeysModal() {
             load(); loadOverview();
           })}>{busy === "ds" ? "WORKING…" : "SAVE & TEST"}</button>
           <button className="kbtn" type="button" disabled={!!busy} onClick={() => run("dt", async () => { try { drexResult(await post("/api/keys/drex/test")); } catch (e: any) { setDMsg({ ok: false, text: e.message }); } })}>{busy === "dt" ? "WORKING…" : "TEST CURRENT KEY"}</button>
-          <span className="muted">A test uses 1 request from the hourly budget.</span>
+          <span className="muted">1 REQUEST</span>
         </div>
         <div className={`keymsg ${dMsg ? (dMsg.ok ? "ok" : "bad") : ""}`}>{dMsg?.text}</div>
       </section>
       <section className="keybox">
         <div className="keyhead"><b>ALPACA · PAPER</b>{k && (k.alpaca.api_key.set ? <Stat ok={k.alpaca.connected} txt={`KEY ${k.alpaca.api_key.hint} · ${k.alpaca.connected ? "CONNECTED" : "ERROR"}`} /> : <Stat ok={false} txt="NOT SET" />)}</div>
-        <p>Use the dedicated <a href="https://app.alpaca.markets/dashboard/overview" target="_blank" rel="noopener noreferrer">Alpaca paper account</a>. Trading is pinned to the paper API. Stock data uses IEX; crypto uses Alpaca US; options use the free indicative feed.</p>
+        <p><a href="https://app.alpaca.markets/dashboard/overview" target="_blank" rel="noopener noreferrer">ALPACA PAPER ACCOUNT ↗</a></p>
         <label>API KEY<input ref={bybitKey} type="password" autoComplete="off" spellCheck={false} placeholder="Alpaca paper API key" /></label>
         <label>API SECRET<input ref={bybitSecret} type="password" autoComplete="off" spellCheck={false} placeholder="Alpaca paper API secret" /></label>
         <div className="keyactions">
@@ -193,7 +193,7 @@ function KeysModal() {
             try { const r = await post("/api/keys/alpaca", { api_key: key, api_secret: secret }); bybitKey.current!.value = bybitSecret.current!.value = ""; setBMsg({ ok: true, text: `Saved · paper equity $${fx(r.equity)}` }); } catch (e: any) { setBMsg({ ok: false, text: e.message }); }
             load(); loadOverview();
           })}>{busy === "bs" ? "WORKING…" : "VERIFY & SAVE"}</button>
-          <span className="muted">Verified against the paper account before saving. Auto-trade switches off.</span>
+          <span className="muted">PAPER ONLY · AUTO-TRADE OFF</span>
         </div>
         <div className={`keymsg ${bMsg ? (bMsg.ok ? "ok" : "bad") : ""}`}>{bMsg?.text}</div>
       </section>
@@ -326,12 +326,13 @@ const FIELDS: Field[] = [
 ];
 
 function StrategyModal() {
+  const symbol = useStore(s => s.symbol);
   const [cur, setCur] = useState<any>(null);
   const [draft, setDraft] = useState<any>({});
   const [msg, setMsg] = useState<string | null>(null);
   const [costs, setCosts] = useState<any>(null);
   useEffect(() => {
-    api("/api/strategy").then((r: any) => { setCur(r.strategy); setDraft(r.strategy); setCosts(r.costs); }).catch((e) => setMsg(e.message));
+    api(`/api/strategy?symbol=${encodeURIComponent(symbol || "")}`).then((r: any) => { setCur(r.strategy); setDraft(r.strategy); setCosts(r.costs); }).catch((e) => setMsg(e.message));
   }, []);
   if (!cur) return <Dialog className="keys"><div className="ph"><span className="code">STRAT</span>Strategy</div><p>{msg || "Loading…"}</p></Dialog>;
   const changed = FIELDS.filter((f) => JSON.stringify(draft[f.k]) !== JSON.stringify(cur[f.k]));
@@ -356,13 +357,13 @@ function StrategyModal() {
   };
   return (
     <Dialog className="keys strat">
-      <div className="ph"><span className="code">STRAT</span>Strategy · applies while flat and starts a new run</div>
+      <div className="ph"><span className="code">STRAT</span>Strategy · FLAT REQUIRED · NEW RUN</div>
       <table className="t" style={{ marginTop: 6 }}>
         <tbody>{FIELDS.map((f) => (
-          <tr key={f.k} className={changed.includes(f) ? "sel" : ""}><td className="amb">{f.label}</td><td>{input(f)}</td><td className="wrap muted">{f.help}</td></tr>
+          <tr key={f.k} className={changed.includes(f) ? "sel" : ""}><td className="amb" title={f.help}>{f.label}</td><td>{input(f)}</td></tr>
         ))}</tbody>
       </table>
-      {costs && <p className="muted" style={{ margin: "8px 10px 0" }}>Cost per outcome now ({costs.entry_mode} entries): target {fx(costs.target_bp, 1)}bp · stop {fx(costs.stop_bp, 1)}bp · time exit {fx(costs.time_bp, 1)}bp. Slippage is {costs.source?.stop_slip === "measured" ? "measured from recent trades" : "a default until enough trades are measured"}.</p>}
+      {costs && <p className="muted" style={{ margin: "8px 10px 0" }}>COST BP · {symbol} · TARGET {fx(costs.target_bp, 1)} · STOP {fx(costs.stop_bp, 1)} · TIME {fx(costs.time_bp, 1)}</p>}
       {msg && <div className="warnbox">{msg}</div>}
       <div className="keyactions" style={{ margin: "8px 10px" }}>
         <button className="kbtn amber" disabled={!changed.length} onClick={apply}>APPLY {changed.length ? `(${changed.length})` : ""}</button>
@@ -388,11 +389,11 @@ function AlpacaUniverseModal() {
     } catch (e: any) { setError(e.message); setBusy(false); }
   };
   return <Dialog className="keys"><div className="ph"><span className="code">UNIV</span>Alpaca stock and crypto universe</div>
-    <p>Enter stock tickers and USD crypto pairs. Options contracts have a separate workspace. Each symbol is verified with Alpaca before the service restarts.</p>
+
     <div className="keybox"><label>SYMBOLS<input aria-label="Alpaca monitored symbols" value={text} onChange={e => setText(e.target.value.toUpperCase())} /></label>
       <p>{u?.candidates.map((c: any) => <button key={c.symbol} className="mini" style={{ margin: 3 }} onClick={() => {
         const list = text.split(/[,\s]+/).filter(Boolean); if (!list.includes(c.symbol)) setText([...list, c.symbol].join(", "));
-      }}>{c.symbol}</button>)}</p><p className="muted">Current request cap: {u?.budget_per_hour ?? "—"}/hour. Mirror forecasts count as separate requests.</p>
+      }}>{c.symbol}</button>)}</p><p className="muted">REQUEST CAP {u?.budget_per_hour ?? "—"}/H</p>
       {error && <p className="dn">{error}</p>}<button className="kbtn amber" disabled={busy} onClick={() => void apply()}>{busy ? "APPLYING…" : "VERIFY & APPLY"}</button></div>
   </Dialog>;
 }

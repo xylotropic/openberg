@@ -17,7 +17,7 @@ export async function loadMonitor() {
 export async function loadMarket() {
   const { symbol, tf } = getState();
   if (!symbol) return;
-  const mkt = await api(`/api/market/${symbol}?tf=${tf}`);
+  const mkt = await api(`/api/market/${encodeURIComponent(symbol)}?tf=${tf}`);
   // drop a stale response if the user switched symbol/timeframe meanwhile
   if (getState().symbol === mkt.symbol && getState().tf === mkt.tf) setState({ mkt });
 }

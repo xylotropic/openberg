@@ -245,3 +245,24 @@ def test_equity_base_rates_exclude_overnight_windows():
     bars = [Bar(t, 100, 101, 99, 100, 1, 100) for t in [0, 60000, 120000, 86400000, 86460000, 86520000]]
     assert base_rates(bars, 3, 100, 150, min_windows=1, interval_ms=60000) is None
     assert base_rates(bars, 3, 100, 150, min_windows=1) is not None
+
+
+def test_crypto_pair_route_accepts_slashes(tmp_path):
+    async def run():
+        s = Settings(); s.symbols = ['ETH/USD']
+        store = MarketStore(s.symbols)
+        engine = SimpleNamespace(s=s, store=store, latest_state={})
+        app = make_app(engine)
+        app.on_startup.clear(); app.on_cleanup.clear()
+        runner = web.AppRunner(app); await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 0); await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        try:
+            async with aiohttp.ClientSession() as session:
+                for path in ['ETH/USD', 'ETH%2FUSD']:
+                    async with session.get(f'http://127.0.0.1:{port}/api/market/{path}?tf=5') as resp:
+                        assert resp.status == 200
+                        assert (await resp.json())['symbol'] == 'ETH/USD'
+        finally:
+            await runner.cleanup()
+    asyncio.run(run())

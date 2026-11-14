@@ -165,7 +165,7 @@ def make_app(engine: Engine) -> web.Application:
             "labelled_total": (engine.db.one("SELECT COUNT(*) n FROM decisions WHERE label_json IS NOT NULL") or {}).get("n", 0),
         })
 
-    @routes.get("/api/market/{symbol}")
+    @routes.get("/api/market/{symbol:.+}")
     async def market(req: web.Request) -> web.Response:
         sym = req.match_info["symbol"].upper()
         if sym not in engine.store.state:
@@ -285,14 +285,18 @@ def make_app(engine: Engine) -> web.Application:
         tf = req.query.get("tf") or (None if run else s.decision_tf)
         v = await asyncio.to_thread(validation_mod.compute, engine.db, run_id=run, model=model, decision_tf=tf)
         v["filters"] = {"run": run, "model": model, "tf": tf}
-        v["live_cost_model"] = engine.costs.outcome_costs()
+        cost_symbol = req.query.get("symbol") if req.query.get("symbol") in s.symbols else s.symbols[0]
+        v["live_cost_model"] = engine.costs.outcome_costs(symbol=cost_symbol)
+        v["cost_symbol"] = cost_symbol
         v["calibration"] = {"weights": engine.calibrator.weights_view(), "overrides": engine.calibrator.overrides,
                             "report": {g: engine.calibrator.report.get(g) for g in ("bracket", "return_distribution", "direction", "big_move")}}
         return j(v)
 
     @routes.get("/api/strategy")
-    async def strategy_get(_: web.Request) -> web.Response:
-        return j({"strategy": s.strategy_view(), "choices": s.STRATEGY_CHOICES, "costs": engine.costs.outcome_costs()})
+    async def strategy_get(req: web.Request) -> web.Response:
+        symbol = req.query.get("symbol") if req.query.get("symbol") in s.symbols else s.symbols[0]
+        return j({"strategy": s.strategy_view(), "choices": s.STRATEGY_CHOICES,
+                  "costs": engine.costs.outcome_costs(symbol=symbol), "cost_symbol": symbol})
 
     @routes.post("/api/strategy")
     async def strategy_set(req: web.Request) -> web.Response:

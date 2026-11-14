@@ -8,7 +8,7 @@ import { KV, openDecision } from "./Monitor";
 
 /* ---------------------------------------------------------------- charts for EVAL (hand-drawn SVG) */
 function Reliability({ cal, horizon }: { cal: any; horizon?: number }) {
-  if (!cal?.bins?.length) return <div className="empty">Needs labelled decisions (each is scored {horizon || 120} min after it is made)</div>;
+  if (!cal?.bins?.length) return <div className="empty">NO LABELS · HORIZON {horizon || 120}M</div>;
   const W = 420, H = 250, P = 34, x = (v: number) => P + v * (W - 2 * P), y = (v: number) => H - P - v * (H - 2 * P), mxN = Math.max(...cal.bins.map((b: any) => b.n));
   return (
     <>
@@ -26,7 +26,7 @@ function Reliability({ cal, horizon }: { cal: any; horizon?: number }) {
         ))}
         <text x={W / 2} y={H - 3} textAnchor="middle">predicted probability → · observed frequency ↑</text>
       </svg>
-      <div className="muted">On the dashed line = calibrated · ECE {fx(cal.ece, 3)} · dot size = sample count</div>
+      <div className="muted">ECE {fx(cal.ece, 3)}</div>
     </>
   );
 }
@@ -127,14 +127,14 @@ export function EvalView() {
         <Panel code="FIND" title="Findings" span2><ul className="obs">{(m.observations || []).map((o: string, i: number) => <li key={i}>{o}</li>)}{!m.observations?.length && <li>No findings yet.</li>}</ul></Panel>
         <Panel code="CAL" title="Calibration · P(long target first)"><Reliability cal={mq.long_bracket?.calibration_target_first} horizon={st?.horizon_minutes} /></Panel>
         <Panel code="CAL" title="Calibration · P(short target first)"><Reliability cal={mq.short_bracket?.calibration_target_first} horizon={st?.horizon_minutes} /></Panel>
-        <Panel code="EDGE" title="Realised R by predicted EV"><HBars items={edge.by_predicted_ev} vk="mean_realised_r" lk="ev_bucket" unit="R" /><div className="muted">Predicted EV bucket → mean realised bracket R net of costs, over every labelled bar and both sides.</div></Panel>
-        <Panel code="PIT" title="Return distribution · PIT histogram">{pit ? <><HBars items={pit.map((n: number, i: number) => ({ q: `Q${i + 1}`, v: n, n }))} vk="v" lk="q" signed={false} /><div className="muted">Flat = calibrated · U-shape = overconfident · hump = underconfident</div></> : <div className="empty">Needs labelled decisions</div>}</Panel>
+        <Panel code="EDGE" title="Realised R by predicted EV"><HBars items={edge.by_predicted_ev} vk="mean_realised_r" lk="ev_bucket" unit="R" /><div className="muted"></div></Panel>
+        <Panel code="PIT" title="Return distribution · PIT histogram">{pit ? <><HBars items={pit.map((n: number, i: number) => ({ q: `Q${i + 1}`, v: n, n }))} vk="v" lk="q" signed={false} /><div className="muted"></div></> : <div className="empty">Needs labelled decisions</div>}</Panel>
         <Panel code="SCOR" title="Per-question scores vs baselines" tight>
           <table className="t"><thead><tr><th>Question</th><th className="r">n</th><th className="r">Score</th><th className="r">Climat.</th><th className="r">Uniform</th><th className="r">Skill</th><th className="r">Acc / majority</th></tr></thead>
             <tbody>{qr(mq.long_bracket)}{qr(mq.short_bracket)}{qr(mq.return_distribution, "rps")}{qr(mq.regime)}
               {bq(mq.direction)}{bq(mq.big_move)}
               {mr && <tr><td className="amb">mean_reversion</td><td className="r">{mr.n}</td><td className="r">{fx(mr.brier, 4)}</td><td className="r">{fx(mr.brier_climatology, 4)}</td><td className="r">—</td><td className={`r ${ud(mr.skill_vs_climatology)}`}>{sg(mr.skill_vs_climatology, 3)}</td><td className="r">AUC {fx(mr.auc, 3)}</td></tr>}</tbody></table>
-          <div className="muted" style={{ padding: "4px 8px" }}>Multiclass Brier, or RPS for ordered bins. Lower is better. Skill = 1 − score / climatology.</div>
+          <div className="muted" style={{ padding: "4px 8px" }}>SKILL = 1 − SCORE / CLIMATOLOGY</div>
         </Panel>
         <Panel code="BASE" title="Model vs the base rates it was given · calibration weights" tight>
           {Object.keys(vb).length ? (
@@ -148,8 +148,8 @@ export function EvalView() {
                 ))}
               </tbody>
             </table>
-          ) : <div className="empty">Needs labelled v2 decisions (each is scored after its horizon)</div>}
-          <div className="muted" style={{ padding: "4px 8px" }}>Decisions use w · model + (1 − w) · base rates. w is fitted on independent (non-overlapping) labelled windows once a question has 30; until then it is 0.5. Long and short brackets share one weight. Skill &gt; 0 = the model adds information beyond the base rates. Weights are fitted per model and per trading timeframe. The VALID screen (F6) has intervals, splits and walk-forward results.</div>
+          ) : <div className="empty">NO LABELLED DECISIONS</div>}
+
         </Panel>
         <Panel code="PRB" title="Consistency probes" tight><KV rows={[
           ["Repeat probes", cons.repeat_probes], ["Identical answers", fx(cons.repeat_identical_share, 3)], ["Mean max |Δp| on repeat", fx(cons.repeat_max_abs_prob_diff_mean, 4)],
@@ -242,7 +242,7 @@ export function TradesView() {
       <section className="pnl">
         <div className="ph"><span className="code">TRD</span>Bot trades · {run ? `Run ${run}` : "all runs"} · Alpaca paper<span className="ph-r">Fill P&amp;L is gross; per-trade fee availability is recorded separately</span></div>
         <div className="pb tight scroll">
-          {!ts ? <div className="empty">Loading…</div> : !ts.length ? <div className="empty">No trades yet. They appear once a model key is set and AUTO-TRADE is on.</div> : (
+          {!ts ? <div className="empty">Loading…</div> : !ts.length ? <div className="empty">NO TRADES</div> : (
             <table className="t">
               <thead><tr><th>Run</th><th>Opened</th><th>Sym</th><th>Side</th><th>Mode</th><th className="r">Qty (req)</th><th className="r">Ref</th><th className="r">Entry</th><th className="r">Slip bp</th><th className="r">TP</th><th className="r">SL</th>
                 <th>Status</th><th>Exit</th><th className="r">Exit px</th><th className="r">Exit slip</th><th className="r">Fills</th><th className="r">PnL</th><th className="r">Fees</th><th className="r">R</th><th className="r">EV R</th><th>Dec</th></tr></thead>
@@ -299,7 +299,7 @@ export function NewsView() {
                 })}
               </tbody>
             </table>
-          ) : <div className="empty">No news forecasts yet. New headlines that mention a traded asset are sent to Kairos news_return (Kairos only; paused while another model is active).</div>}
+          ) : <div className="empty">NO NEWS FORECASTS</div>}
         </div>
       </section>
       <section className="pnl">

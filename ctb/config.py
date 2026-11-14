@@ -11,9 +11,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+ENV_PATH = Path(os.environ.get("CTB_ENV_PATH", str(ROOT / ".env")))
 
 
-def load_dotenv(path: Path = ROOT / ".env") -> None:
+def load_dotenv(path: Path = ENV_PATH) -> None:
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -26,7 +27,7 @@ def load_dotenv(path: Path = ROOT / ".env") -> None:
             os.environ[key] = value.strip().strip('"').strip("'")
 
 
-def save_env(updates: dict[str, str], path: Path = ROOT / ".env") -> None:
+def save_env(updates: dict[str, str], path: Path = ENV_PATH) -> None:
     """Upsert KEY=value lines in .env (keeps comments/other keys), owner-only permissions."""
     for k, v in updates.items():
         if not k.replace("_", "").isalnum() or any(c in v for c in "\r\n"):
@@ -203,7 +204,7 @@ class Settings:
     host: str = os.environ.get("CTB_HOST", "127.0.0.1")
     port: int = _i("CTB_PORT", 8800)
     db_path: Path = Path(os.environ.get("CTB_DB_PATH", str(ROOT / "data" / "ctb.db")))
-    kill_file: Path = ROOT / "KILL"
+    kill_file: Path = Path(os.environ.get("CTB_KILL_FILE", str(ROOT / "KILL")))
 
     @property
     def alpaca_api_key(self) -> str:

@@ -117,7 +117,7 @@ function Macro() {
   const names: Record<string, string> = { SPX_fut: "S&P 500 FUT", NDX_fut: "NASDAQ 100 FUT", DXY: "DOLLAR INDEX", Gold: "GOLD FUT", US10Y: "US 10Y YIELD", VIX: "VIX" };
   const fg = mon?.fear_greed;
   const clock = useStore(s => s.ov?.account?.market_clock);
-  if (!Object.keys(mon?.macro || {}).length) return <div className="market-capabilities"><div>US stocks/options <b className={clock?.is_open ? "up" : "amb"}>{clock?.is_open ? "OPEN" : "CLOSED"}</b></div><div>Crypto <b className="up">24/7</b></div><span>Stock prices shown are IEX; closed-session quotes can be stale.</span></div>;
+  if (!Object.keys(mon?.macro || {}).length) return <div className="market-capabilities"><div>US stocks/options <b className={clock?.is_open ? "up" : "amb"}>{clock?.is_open ? "OPEN" : "CLOSED"}</b></div><div>Crypto <b className="up">24/7</b></div><span>IEX · LAST SESSION</span></div>;
   return (
     <table className="t">
       <thead><tr><th>Instrument</th><th className="r">Last</th><th className="r">8h chg</th></tr></thead>
@@ -177,11 +177,11 @@ function KairosPanel() {
   if (!d)
     return (
       <>
-        <div className="kv-verdict"><span className="big muted">NO SIGNAL</span><span className="why">{ov?.kairos.configured ? `${ov.kairos.label} is asked on every closed ${ov.settings.decision_tf_minutes}m bar. Type ASK to ask now.` : `Add a ${ov?.kairos.label || "model"} key (type KEYS) to start receiving signals.`}</span></div>
+        <div className="kv-verdict"><span className="big muted">NO SIGNAL</span><span className="why">{ov?.kairos.configured ? `AWAITING FORECAST · ${ov.settings.decision_tf_minutes}M` : "API KEY REQUIRED"}</span></div>
         {pv && <div className="kv"><div className="k">Next bracket SL</div><div className="v">{fx(pv.meta.sl_bp / 100, 2)}%</div><div className="k">Next bracket TP</div><div className="v">{fx(pv.meta.tp_bp / 100, 2)}%</div><div className="k">Horizon</div><div className="v">{pv.meta.horizon_min} min</div></div>}
       </>
     );
-  if (d.error_kind) return <><div className="kv-verdict"><span className="big dn">ERROR</span><span className="why">{d.error_kind}: {d.error_msg}</span></div><div className="muted">{dt(d.ts)} · recorded as a request failure, never as a &quot;no trade&quot; judgment.</div></>;
+  if (d.error_kind) return <><div className="kv-verdict"><span className="big dn">ERROR</span><span className="why">{d.error_kind}: {d.error_msg}</span></div><div className="muted">{dt(d.ts)}</div></>;
   const p = d.parsed || {}, sl = d.sl_bp / 100, tp = d.tp_bp / 100;
   const e = [-2, -1, -1 / 3, 1 / 3, 1, 2].map((x) => x * sl);
   const binL: Record<string, string> = {};
@@ -611,10 +611,9 @@ export { cssVar };
 function Capabilities() {
   return <><Ph code="FEED">Data coverage</Ph><div className="market-capabilities">
     <div className="amb">ALPACA PAPER + DREX FINANCE</div>
-    <div>Stocks <span>IEX quotes and historical bars</span></div><div>Crypto <span>Alpaca US spot · 24/7 · long only</span></div>
-    <div>Options <span>Indicative chain · paper long calls/puts</span></div><div>Newsroom <span>Alpaca news · source links retained</span></div>
-    <div>Filings <span>SEC EDGAR · every form type + archives</span></div>
-    <div className="muted">Full depth, aggressor flow, funding and liquidation feeds are unavailable on this adapter.</div>
+    <div>STOCKS <span>IEX</span></div><div>CRYPTO <span>ALPACA US · SPOT</span></div>
+    <div>OPTIONS <span>INDICATIVE</span></div><div>NEWS <span>ALPACA</span></div>
+    <div>FILINGS <span>SEC EDGAR</span></div>
   </div></>;
 }
 
@@ -625,8 +624,8 @@ function AlpacaSessions() {
     <div>US MARKET <b className={clock?.is_open ? "up" : "amb"}>{clock?.is_open ? "OPEN" : "CLOSED"}</b></div>
     <div>Next open <span>{clock?.next_open ? new Date(clock.next_open).toLocaleString() : "—"}</span></div>
     <div>Crypto <b className="up">24/7</b></div><div>Paper only <b className="up">ENFORCED</b></div>
-    <div>Stops <span>Managed exits + broker stop-limit backstop</span></div>
-    <div>Existing positions <span>External positions are preserved</span></div>
-    <div>P&L <span>Broker fills; fee availability is recorded per trade</span></div>
+    <div>Stops <span>MANAGED + STOP-LIMIT</span></div>
+    <div>Existing positions <span>EXTERNAL</span></div>
+    <div>P&L <span>BROKER FILLS · GROSS</span></div>
   </div></>;
 }
