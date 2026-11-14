@@ -231,6 +231,15 @@ def test_exit_also_cancels_an_owned_opening_trade(tmp_path):
     assert strategy.e.executor.closed==[('TSLA','drex_exit')]
 
 
+def test_session_run_metrics_preserve_unknown_request_sizes(tmp_path):
+    from ctb.evaluation.metrics import compute
+    strategy,now=service(tmp_path)
+    asyncio.run(strategy.apply('TSLA','HOLD',.9,strategy.build(now),result(6000,{'TSLA':{}}),'test'))
+    assert compute(strategy.db)['ops']['request_bytes_mean'] is None
+    strategy.db.conn.execute('UPDATE decisions SET request_bytes=1234')
+    assert compute(strategy.db)['ops']['request_bytes_mean']==1234
+
+
 def test_requested_cadence_and_restart_reservations(tmp_path,monkeypatch):
     strategy,now=service(tmp_path);sent=[];observed=[];clock=[now]
     monkeypatch.setattr('ctb.scalper.time.time',lambda:clock[0])

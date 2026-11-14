@@ -206,6 +206,7 @@ def compute(db: DB, *, symbol: str | None = None, since_ts: float | None = None,
     lat = [d["latency_ms"] for d in ok if d["latency_ms"]]
     toks = [(d["usage_json"] or {}).get("input_tokens") for d in ok]
     toks = [t for t in toks if isinstance(t, (int, float))]
+    sizes = [d['request_bytes'] for d in ok if d['request_bytes'] is not None]
     versions = Counter(str((d["model_meta_json"] or {}).get("model_version") or (d["model_meta_json"] or {}).get("model")) for d in ok)
     out["ops"] = {
         "requests": len(decs), "ok": len(ok), "errors": dict(errs),
@@ -213,7 +214,7 @@ def compute(db: DB, *, symbol: str | None = None, since_ts: float | None = None,
         "schema_issues": dict(issues.most_common(15)), "responses_with_issues": sum(1 for d in ok if d["issues_json"]),
         "latency_ms_p50": _r4(_pct(lat, 0.5)), "latency_ms_p90": _r4(_pct(lat, 0.9)), "latency_ms_p99": _r4(_pct(lat, 0.99)),
         "input_tokens_mean": _r4(statistics.fmean(toks)) if toks else None, "input_tokens_max": max(toks) if toks else None,
-        "request_bytes_mean": _r4(statistics.fmean([d["request_bytes"] for d in ok if d["request_bytes"]])) if ok else None,
+        "request_bytes_mean": _r4(statistics.fmean(sizes)) if sizes else None,
         "retried_requests": sum(1 for d in ok if (d["attempts"] or 1) > 1),
         "model_versions": dict(versions),
     }
